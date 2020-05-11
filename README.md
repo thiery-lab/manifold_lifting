@@ -43,7 +43,7 @@ For a complete example of applying the method described in the paper to perform 
 To install the dependencies to run the notebook locally, first create a local clone of the repository
 
 ```bash
-git clone https://github.com/thiery-lab/manifold_lifiting.git
+git clone https://github.com/thiery-lab/manifold_lifting.git
 ```
 
 Then either create a new Python 3.6+ environment using your environment manager of choice (e.g. [`conda`](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands), [`virtualenv`](https://virtualenv.pypa.io/en/latest/userguide/#usage), [`venv`](https://docs.python.org/3/library/venv.html#creating-virtual-environments), [`pipenv`](https://pipenv.kennethreitz.org/en/latest/install/#installing-packages-for-your-project)) or activate the existing environment you wish to use.
