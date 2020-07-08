@@ -1,4 +1,4 @@
-mici>=0.1.5
+mici>=0.1.8
 symnum>=0.1.0
 numpy>=1.15
 scipy>=1.1
