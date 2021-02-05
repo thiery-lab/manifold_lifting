@@ -22,7 +22,7 @@ jax.config.update("jax_platform_name", "cpu")
 # Process command line arguments defining experiment parameters
 
 parser = argparse.ArgumentParser(
-    description="Run Hodgkin-Huxley voltage clamp data experiment"
+    description="Run Hodgkin-Huxley model current stimulus simulated data experiment"
 )
 parser.add_argument(
     "--output-root-dir",
@@ -479,13 +479,11 @@ def trace_func(state):
 print("Finding acceptable initial states ...")
 
 
-def calculate_spike_times(y, data):
-    v = onp.clip(y, -10, None)
-    v = onp.convolve(v, onp.ones(2) / 2, "same")
+def calculate_spike_times(y, data, smoothing_window=10):
+    v = onp.convolve(y, onp.ones(smoothing_window) / smoothing_window, "same")
+    v = onp.clip(v, -10, None)
     v[onp.where(onp.diff(v) < 0)] = -10
     spike_times = data["t_obs"][onp.where(onp.diff(v) < 0)]
-    if spike_times.shape[0] > 0:
-        spike_times = spike_times[onp.append(1, onp.diff(spike_times)) > 0.5]
     return spike_times
 
 
