@@ -984,16 +984,18 @@ class PartiallyInvertibleStateSpaceModelSystem(
 
         if jacob_constr_blocks_split is None:
 
-            def jacob_constr_blocks_split(u, v, n):
-                dc_du = api.jacfwd(constr_split)(u, v, n)
+            def jacob_constr_blocks_split(u, v, n, data):
+                dc_du = api.jacfwd(constr_split)(u, v, n, data)
                 one_vct = np.ones(dim_y)
                 alt_vct = (-1.0) ** np.arange(dim_y)
-                c, dc_dv = api.jvp(lambda v_: constr_split(u, v_, n), (v,), (one_vct,))
+                c, dc_dv = api.jvp(
+                    lambda v_: constr_split(u, v_, n, data), (v,), (one_vct,)
+                )
                 _, dc_dn_1 = api.jvp(
-                    lambda n_: constr_split(u, v, n_), (n,), (one_vct,)
+                    lambda n_: constr_split(u, v, n_, data), (n,), (one_vct,)
                 )
                 _, dc_dn_a = api.jvp(
-                    lambda n_: constr_split(u, v, n_), (n,), (alt_vct,)
+                    lambda n_: constr_split(u, v, n_, data), (n,), (alt_vct,)
                 )
                 dc_dn = (
                     (dc_dn_1 + dc_dn_a * alt_vct) / 2,
