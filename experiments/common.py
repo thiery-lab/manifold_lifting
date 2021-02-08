@@ -298,8 +298,8 @@ def compute_and_print_operation_times(system, final_states, num_call=2000):
     }
 
 
-def compute_and_save_summary(output_dir, summary_vars, traces, **kwargs):
-    summary = arviz.summary(traces, var_names=summary_vars)
+def compute_and_save_summary(output_dir, var_names, traces, **kwargs):
+    summary = arviz.summary(traces, var_names=var_names)
     summary_dict = summary.to_dict()
     summary_dict.update(kwargs)
     for key, value in traces.items():
@@ -316,8 +316,8 @@ def run_experiment(
     dim_u,
     rng,
     experiment_name,
-    param_names,
-    param_trace_func,
+    var_names,
+    var_trace_func,
     posterior_neg_log_dens,
     constrained_system_class,
     constrained_system_kwargs,
@@ -354,7 +354,7 @@ def run_experiment(
         }
         return {**call_counts, "hamiltonian": h}
 
-    trace_funcs = [param_trace_func, hamiltonian_and_call_count_trace_func]
+    trace_funcs = [var_trace_func, hamiltonian_and_call_count_trace_func]
 
     # Initialise chain states
 
@@ -388,7 +388,7 @@ def run_experiment(
     print("Computing chain operation times ...")
     operation_times = compute_and_print_operation_times(system, final_states)
 
-    summary_vars = param_names + ["hamiltonian"]
+    summary_vars = var_names + ["hamiltonian"]
     summary, summary_dict = compute_and_save_summary(
         output_dir,
         summary_vars,

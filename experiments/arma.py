@@ -31,7 +31,7 @@ def generate_params(u):
     }
 
 
-def generate_x(u, data):
+def generate_from_model(u, data):
     params = generate_params(u)
 
     def step(x, y):
@@ -46,19 +46,14 @@ def generate_x(u, data):
     return params, x
 
 
-def generate_from_model(u, n, data):
-    params, x = generate_x(u, data)
-    y = x + params["σ"] * n
-    return params, x, y
-
-
 def generate_y(u, n, data):
-    _, _, y = generate_from_model(u, n, data)
+    params, x = generate_from_model(u, data)
+    y = x + params["σ"] * n
     return y
 
 
 def posterior_neg_log_dens(u, data):
-    params, x = generate_x(u, data)
+    params, x = generate_from_model(u, data)
     return (
         ((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
     ).sum() + (u ** 2).sum() / 2
@@ -70,7 +65,7 @@ def sample_initial_states(rng, args, data):
     for _ in range(args.num_chain):
         u = rng.standard_normal(dim_u)
         if args.algorithm == "chmc":
-            params, x = generate_x(u, data)
+            params, x = generate_from_model(u, data)
             n = (data["y_obs"] - x) / params["σ"]
             q = onp.concatenate((u, onp.asarray(n)))
             assert (
@@ -116,8 +111,8 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="arma",
-        param_names=["μ", "ϕ", "θ", "σ"],
-        param_trace_func=trace_func,
+        var_names=["μ", "ϕ", "θ", "σ"],
+        var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={

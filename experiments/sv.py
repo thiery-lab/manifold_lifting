@@ -172,8 +172,8 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="sv",
-        param_names=["μ", "σ", "ϕ"],
-        param_trace_func=trace_func,
+        var_names=["μ", "σ", "ϕ"],
+        var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         constrained_system_class=mlift.PartiallyInvertibleStateSpaceModelSystem,
         constrained_system_kwargs={

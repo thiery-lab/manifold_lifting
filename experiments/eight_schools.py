@@ -113,8 +113,8 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="eight_schools",
-        param_names=["μ", "τ", "x"],
-        param_trace_func=trace_func,
+        var_names=["μ", "τ", "x"],
+        var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         constrained_system_class=mlift.HierarchicalLatentVariableModelSystem,
         constrained_system_kwargs={

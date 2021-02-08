@@ -317,8 +317,8 @@ if __name__ == "__main__":
         rng=rng,
         experiment_name="hh_current_stimulus",
         dir_prefix=f"σ_{args.obs_noise_std:.0e}",
-        param_names=list(params_prior_mean_std_exp_transform.keys()),
-        param_trace_func=trace_func,
+        var_names=list(params_prior_mean_std_exp_transform.keys()),
+        var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={

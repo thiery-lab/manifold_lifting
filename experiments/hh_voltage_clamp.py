@@ -200,8 +200,8 @@ if __name__ == "__main__":
         data["y_obs"] = np.concatenate(data["obs_vals_g_K"] + data["obs_vals_g_Na"])
     else:
         raise ValueError(f"Unrecognised dataset: {args.dataset}")
-    param_names = list(param_sets[args.dataset])
-    dim_u = len(param_names)
+    var_names = list(param_sets[args.dataset])
+    dim_u = len(var_names)
     data["dim_u"] = dim_u
     data["dataset"] = args.dataset
 
@@ -225,8 +225,8 @@ if __name__ == "__main__":
         rng=rng,
         experiment_name="hh_voltage_clamp",
         dir_prefix=f"{args.dataset}_data",
-        param_names=param_names,
-        param_trace_func=trace_func,
+        var_names=var_names,
+        var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
