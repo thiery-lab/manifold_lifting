@@ -41,10 +41,9 @@ class ToleranceAdapter(Adapter):
         )
 
     def initialize(self, chain_state, transition):
-        transition.integrator.projection_solver_kwargs = {
-            "constraint_tol": self.warm_up_constraint_tol,
-            "position_tol": self.warm_up_position_tol,
-        }
+        projection_solver_kwargs = transition.integrator.projection_solver_kwargs
+        projection_solver_kwargs["constraint_tol"] = self.warm_up_constraint_tol
+        projection_solver_kwargs["position_tol"] = self.warm_up_position_tol
         transition.integrator.reverse_check_tol = self.warm_up_reverse_check_tol
         return {}
 
@@ -54,10 +53,9 @@ class ToleranceAdapter(Adapter):
     def finalize(self, adapt_states, chain_states, transition, rngs):
         integrator = transition.integrator
         system = transition.system
-        integrator.projection_solver_kwargs = {
-            "constraint_tol": self.main_constraint_tol,
-            "position_tol": self.main_position_tol,
-        }
+        projection_solver_kwargs = integrator.projection_solver_kwargs
+        projection_solver_kwargs["constraint_tol"] = self.main_constraint_tol
+        projection_solver_kwargs["position_tol"] = self.main_position_tol
         for state in chain_states:
             try:
                 state = integrator.projection_solver(

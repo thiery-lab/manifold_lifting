@@ -20,6 +20,7 @@ from mlift.linalg import (
     tridiagonal_solve,
     tridiagonal_pos_def_log_det,
 )
+from mlift.solvers import maximum_norm
 
 
 def standard_normal_neg_log_dens(q):
@@ -48,6 +49,45 @@ def convert_to_numpy_pytree(jax_pytree):
         raise ValueError(f"Unknown jax_pytree node type {type(jax_pytree)}")
 
 
+def construct_euclidean_metric_system_functions(jax_neg_log_dens):
+    """Construct functions to initialise system from JAX negative log density function.
+
+    Given a negative log density function defined using JAX primitives, constructs
+    `jit` transformed versions of the function and its gradient and then wraps these
+    into functions with the required interface for passing to the initialiser of a Mici
+    Euclidean metric system class, specifically ensuring the values outputted by the
+    functions are NumPy `ndarray` objects rather than JAX `DeviceArray` or `Buffer`
+    instances and returning both the gradient and value from the gradient function
+    (in that order).
+
+    Args:
+        jax_neg_log_dens (callable): Function accepting a single array argument and
+            returning a scalar corresponding to the negative logarithm of the target
+            density. Should be constructed using only JAX primitives (e.g. from the
+            `jax.numpy` API) so that JAX transforms can be applied.
+
+    Returns:
+        A tuple `(neg_log_dens, grad_neg_log_dens)`, with `neg_log_dens` a function
+        accepting a single array argument and returning a NumPy scalar corresponding to
+        the negative logarithm of the target density, and `grad_neg_log_dens` a function
+        accepting a single array argument and returning a tuple `(grad, val)` with
+        `grad` a NumPy array corresponding to the gradient of the negative logarithm of
+        the target density with respect o the input latent vector, and `val` its value.
+    """
+
+    jitted_neg_log_dens = api.jit(jax_neg_log_dens)
+    jitted_val_and_grad_neg_log_dens = api.jit(api.value_and_grad(jax_neg_log_dens))
+
+    def neg_log_dens(q):
+        return onp.asarray(jitted_neg_log_dens(q))
+
+    def grad_neg_log_dens(q):
+        val, grad = jitted_val_and_grad_neg_log_dens(q)
+        return onp.asarray(grad), onp.asarray(val)
+
+    return neg_log_dens, grad_neg_log_dens
+
+
 class _AbstractDifferentiableGenerativeModelSystem(System):
     """Base class for constrained systems for differentiable generative models.
 
@@ -69,16 +109,26 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
         lmult_by_inv_gram,
         lmult_by_inv_jacob_product,
         log_det_sqrt_gram,
+        lmult_by_pinv_jacob_constr=None,
+        normal_space_component=None,
     ):
-        def normal_space_component(jacob_constr_blocks, gram_components, vct):
-            return rmult_by_jacob_constr(
-                *jacob_constr_blocks,
-                lmult_by_inv_gram(
+
+        if lmult_by_pinv_jacob_constr is None:
+
+            def lmult_by_pinv_jacob_constr(jacob_constr_blocks, gram_components, vct):
+                return rmult_by_jacob_constr(
                     *jacob_constr_blocks,
-                    *gram_components,
+                    lmult_by_inv_gram(*jacob_constr_blocks, *gram_components, vct,),
+                )
+
+        if normal_space_component is None:
+
+            def normal_space_component(jacob_constr_blocks, gram_components, vct):
+                return lmult_by_pinv_jacob_constr(
+                    jacob_constr_blocks,
+                    gram_components,
                     lmult_by_jacob_constr(*jacob_constr_blocks, vct),
-                ),
-            )
+                )
 
         def quasi_newton_projection(
             q,
@@ -89,21 +139,16 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
             position_tol,
             divergence_tol,
             max_iters,
+            norm,
         ):
             """Quasi-Newton method to solve projection onto manifold."""
-
-            def norm(x):
-                return abs(x).max()
 
             def body_func(val):
                 q, mu, i, _, _ = val
                 c = constr(q)
                 error = norm(c)
-                delta_mu = rmult_by_jacob_constr(
-                    *jacob_constr_blocks_prev,
-                    lmult_by_inv_gram(
-                        *jacob_constr_blocks_prev, *gram_components_prev, c
-                    ),
+                delta_mu = lmult_by_pinv_jacob_constr(
+                    jacob_constr_blocks_prev, gram_components_prev, c
                 )
                 mu += delta_mu
                 q -= delta_mu
@@ -133,11 +178,9 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
             position_tol,
             divergence_tol,
             max_iters,
+            norm,
         ):
             """Newton method to solve projection onto manifold."""
-
-            def norm(x):
-                return abs(x).max()
 
             def body_func(val):
                 q, mu, i, _, _ = val
@@ -176,12 +219,16 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
         self._val_and_grad_log_det_sqrt_gram = api.jit(
             api.value_and_grad(log_det_sqrt_gram, has_aux=True)
         )
+        self._lmult_by_jacob_constr = api.jit(lmult_by_jacob_constr)
+        self._rmult_by_jacob_constr = api.jit(rmult_by_jacob_constr)
+        self._lmult_by_pinv_jacob_constr = api.jit(lmult_by_pinv_jacob_constr)
+        self._lmult_by_inv_jacob_product = api.jit(lmult_by_inv_jacob_product)
         self._normal_space_component = api.jit(normal_space_component)
-        self._quasi_newton_projection = api.jit(quasi_newton_projection, (4, 5, 6, 7))
-        self._newton_projection = api.jit(newton_projection, (3, 4, 5, 6))
+        self._quasi_newton_projection = api.jit(quasi_newton_projection, 8)
+        self._newton_projection = api.jit(newton_projection, 7)
         super().__init__(neg_log_dens=neg_log_dens, grad_neg_log_dens=grad_neg_log_dens)
 
-    def precompile_jax_functions(self, q):
+    def precompile_jax_functions(self, q, solver_norm=maximum_norm):
         self._neg_log_dens(q)
         self._grad_neg_log_dens(q)
         self._constr(q)
@@ -189,11 +236,15 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
         gram_components = self._decompose_gram(*jac_blocks)
         self._log_det_sqrt_gram(q)
         self._val_and_grad_log_det_sqrt_gram(q)
+        self._lmult_by_jacob_constr(*jac_blocks, q)
+        self._rmult_by_jacob_constr(*jac_blocks, c)
+        self._lmult_by_pinv_jacob_constr(jac_blocks, gram_components, c)
+        self._lmult_by_inv_jacob_product(*jac_blocks, *jac_blocks, c)
         self._normal_space_component(jac_blocks, gram_components, q)
         self._quasi_newton_projection(
-            q, jac_blocks, gram_components, 1, 1e-6, 1e-5, 1e3, 100
+            q, jac_blocks, gram_components, 1, 0.1, 0.1, 10, 10, solver_norm
         )
-        self._newton_projection(q, jac_blocks, 1, 1e-6, 1e-5, 1e3, 100)
+        self._newton_projection(q, jac_blocks, 1, 0.1, 0.1, 10, 10, solver_norm)
 
     @cache_in_state("pos")
     def constr(self, state):
@@ -258,9 +309,35 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
         return (dt * IdentityMatrix(), IdentityMatrix())
 
     def normal_space_component(self, state, vct):
-        return convert_to_numpy_pytree(
+        return onp.asarray(
             self._normal_space_component(
                 self.jacob_constr_blocks(state), self.gram_components(state), vct
+            )
+        )
+
+    def lmult_by_jacob_constr(self, state, vct):
+        return onp.asarray(
+            self._lmult_by_jacob_constr(*self.jacob_constr_blocks(state), vct)
+        )
+
+    def rmult_by_jacob_constr(self, state, vct):
+        return onp.asarray(
+            self._rmult_by_jacob_constr(*self.jacob_constr_blocks(state), vct)
+        )
+
+    def lmult_by_pinv_jacob_constr(self, state, vct):
+        return onp.asarray(
+            self._lmult_by_pinv_jacob_constr(
+                self.jacob_constr_blocks(state), self.gram_components(state), vct
+            )
+        )
+
+    def lmult_by_inv_jacob_product(self, state_1, state_2, vct):
+        return onp.asarray(
+            self._lmult_by_inv_jacob_product(
+                *self.jacob_constr_blocks(state_1),
+                *self.jacob_constr_blocks(state_2),
+                vct,
             )
         )
 
@@ -896,21 +973,18 @@ class PartiallyInvertibleStateSpaceModelSystem(
 
     def __init__(
         self,
-        constr,
-        jacob_constr_blocks,
+        constr_split,
+        jacob_constr_blocks_split,
+        data,
         dim_u,
-        dim_y,
         neg_log_dens=standard_normal_neg_log_dens,
         grad_neg_log_dens=standard_normal_grad_neg_log_dens,
     ):
+        dim_y = data["y_obs"].shape[0]
 
-        if jacob_constr_blocks is None:
+        if jacob_constr_blocks_split is None:
 
-            def constr_split(u, v, n):
-                return constr(np.concatenate((u, v, n)))
-
-            def jacob_constr_blocks(q):
-                u, v, n = np.split(q, (dim_u, dim_u + dim_y))
+            def jacob_constr_blocks_split(u, v, n):
                 dc_du = api.jacfwd(constr_split)(u, v, n)
                 one_vct = np.ones(dim_y)
                 alt_vct = (-1.0) ** np.arange(dim_y)
@@ -926,6 +1000,14 @@ class PartiallyInvertibleStateSpaceModelSystem(
                     (dc_dn_1[1:] - dc_dn_a[1:] * alt_vct[1:]) / 2,
                 )
                 return (dc_du, dc_dv, dc_dn), c
+
+        def constr(q):
+            u, v, n = np.split(q, (dim_u, dim_u + dim_y))
+            return constr_split(u, v, n, data)
+
+        def jacob_constr_blocks(q):
+            u, v, n = np.split(q, (dim_u, dim_u + dim_y))
+            return jacob_constr_blocks_split(u, v, n, data)
 
         def lmult_by_jacob_constr(dc_du, dc_dv, dc_dn, vct):
             vct_u, vct_v, vct_n = (

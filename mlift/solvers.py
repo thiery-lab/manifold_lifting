@@ -3,6 +3,16 @@ from mici.states import _cache_key_func
 from mici.errors import ConvergenceError
 
 
+def euclidean_norm(vct):
+    """Calculate the Euclidean (L-2) norm of a vector."""
+    return (vct ** 2).sum() ** 0.5
+
+
+def maximum_norm(vct):
+    """Calculate the maximum (L-infinity) norm of a vector."""
+    return abs(vct).max()
+
+
 def jitted_solve_projection_onto_manifold_quasi_newton(
     state,
     state_prev,
@@ -12,6 +22,7 @@ def jitted_solve_projection_onto_manifold_quasi_newton(
     position_tol=1e-8,
     divergence_tol=1e10,
     max_iters=50,
+    norm=maximum_norm,
 ):
     """Symmetric quasi-Newton solver for projecting points onto manifold.
 
@@ -48,7 +59,7 @@ def jitted_solve_projection_onto_manifold_quasi_newton(
     """
     jacob_constr_blocks_prev = system.jacob_constr_blocks(state_prev)
     gram_components_prev = system.gram_components(state_prev)
-    q_, mu, i, norm_delta_q, error = system._quasi_newton_projection(
+    q_, mu, num_iters, norm_delta_q, error = system._quasi_newton_projection(
         state.pos,
         jacob_constr_blocks_prev,
         gram_components_prev,
@@ -57,14 +68,16 @@ def jitted_solve_projection_onto_manifold_quasi_newton(
         position_tol,
         divergence_tol,
         max_iters,
+        norm,
     )
+    num_iters = int(num_iters)
     if state._call_counts is not None:
-        for method in [system.constr]:
+        for method in [system.constr, system.lmult_by_pinv_jacob_constr]:
             key = _cache_key_func(system, method)
             if key in state._call_counts:
-                state._call_counts[key] += i
+                state._call_counts[key] += num_iters
             else:
-                state._call_counts[key] = i
+                state._call_counts[key] = num_iters
     if error < constraint_tol and norm_delta_q < position_tol:
         state.pos = onp.array(q_)
         if state.mom is not None:
@@ -72,12 +85,12 @@ def jitted_solve_projection_onto_manifold_quasi_newton(
         return state
     elif error > divergence_tol or onp.isnan(error):
         raise ConvergenceError(
-            f"Quasi-Newton iteration diverged on iteration {i}. "
+            f"Quasi-Newton iteration diverged on iteration {num_iters}. "
             f"Last |c|={error:.1e}, |δq|={norm_delta_q}."
         )
     else:
         raise ConvergenceError(
-            f"Quasi-Newton iteration did not converge. "
+            f"Quasi-Newton iteration did not converge in {num_iters} iterations. "
             f"Last |c|={error:.1e}, |δq|={norm_delta_q}."
         )
 
@@ -91,6 +104,7 @@ def jitted_solve_projection_onto_manifold_newton(
     position_tol=1e-8,
     divergence_tol=1e10,
     max_iters=50,
+    norm=maximum_norm,
 ):
     """Newton solver for projecting points onto manifold.
 
@@ -115,7 +129,7 @@ def jitted_solve_projection_onto_manifold_newton(
     performance.
     """
     jacob_constr_blocks_prev = system.jacob_constr_blocks(state_prev)
-    q_, mu, i, norm_delta_q, error = system._newton_projection(
+    q_, mu, num_iters, norm_delta_q, error = system._newton_projection(
         state.pos,
         jacob_constr_blocks_prev,
         dt,
@@ -123,14 +137,21 @@ def jitted_solve_projection_onto_manifold_newton(
         position_tol,
         divergence_tol,
         max_iters,
+        norm,
     )
+    num_iters = int(num_iters)
     if state._call_counts is not None:
-        for method in [system.constr, system.jacob_constr_blocks]:
+        for method in [
+            system.constr,
+            system.jacob_constr_blocks,
+            system.rmult_by_jacob_constr,
+            system.lmult_by_inv_jacob_product,
+        ]:
             key = _cache_key_func(system, method)
             if key in state._call_counts:
-                state._call_counts[key] += i
+                state._call_counts[key] += num_iters
             else:
-                state._call_counts[key] = i
+                state._call_counts[key] = num_iters
     if error < constraint_tol and norm_delta_q < position_tol:
         state.pos = onp.array(q_)
         if state.mom is not None:
@@ -138,11 +159,11 @@ def jitted_solve_projection_onto_manifold_newton(
         return state
     elif error > divergence_tol or onp.isnan(error):
         raise ConvergenceError(
-            f"Newton iteration diverged on iteration {i}. "
+            f"Newton iteration diverged on iteration {num_iters}. "
             f"Last |c|={error:.1e}, |δq|={norm_delta_q}."
         )
     else:
         raise ConvergenceError(
-            f"Newton iteration did not converge. "
+            f"Newton iteration did not converge in {num_iters} iterations. "
             f"Last |c|={error:.1e}, |δq|={norm_delta_q}."
         )
