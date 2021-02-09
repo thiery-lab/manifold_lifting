@@ -49,19 +49,18 @@ def convert_to_numpy_pytree(jax_pytree):
         raise ValueError(f"Unknown jax_pytree node type {type(jax_pytree)}")
 
 
-def construct_euclidean_metric_system_functions(jax_neg_log_dens):
+def construct_mici_system_neg_log_dens_functions(jax_neg_log_dens):
     """Construct functions to initialise system from JAX negative log density function.
 
-    Given a negative log density function defined using JAX primitives, constructs
-    `jit` transformed versions of the function and its gradient and then wraps these
-    into functions with the required interface for passing to the initialiser of a Mici
-    Euclidean metric system class, specifically ensuring the values outputted by the
-    functions are NumPy `ndarray` objects rather than JAX `DeviceArray` or `Buffer`
-    instances and returning both the gradient and value from the gradient function
-    (in that order).
+    Given a negative log density function defined using JAX primitives, constructs `jit`
+    transformed versions of the function and its gradient and then wraps these into
+    functions with the required interface for passing to the initialiser of a Mici
+    system class, specifically ensuring the values outputted by the functions are NumPy
+    `ndarray` objects rather than JAX `DeviceArray` or `Buffer` instances and returning
+    both the gradient and value from the gradient function (in that order).
 
     Args:
-        jax_neg_log_dens (callable): Function accepting a single array argument and
+        jax_neg_log_dens (Callable): Function accepting a single array argument and
             returning a scalar corresponding to the negative logarithm of the target
             density. Should be constructed using only JAX primitives (e.g. from the
             `jax.numpy` API) so that JAX transforms can be applied.
@@ -86,6 +85,61 @@ def construct_euclidean_metric_system_functions(jax_neg_log_dens):
         return onp.asarray(grad), onp.asarray(val)
 
     return neg_log_dens, grad_neg_log_dens
+
+
+def construct_state_space_model_generators(
+    generate_params, generate_x_0, forward_func, observation_func
+):
+    """Construct functions to generate obs. and state sequences for state space models.
+
+    Args:
+        generate_params (Callable[[ArrayLike], Dict]): Function which generates a
+            dictionary of model parameters given a 1D array of unbounded global latent
+            variables.
+        generate_x_0 (Callable[[Dict, ArrayLike], ArrayLike]): Function which generates
+            the initial latent state given a dictionary of model parameters and an
+            array of unbounded local latent variables.
+        forward_func (Callable[[Dict, ArrayLike, ArrayLike], ArrayLike]): Function which
+            generates the next state in the latent state sequence, given a dictionary of
+            model parameters, an array of unbounded local latent variables and the
+            current latent state.
+        observation_func (Callable[[Dict, ArrayLike, ArrayLike], ArrayLike]): Function
+            which generates the observation of a latent state, given a dictionary of
+            model parameters, an array of unbounded local latent (observation noise)
+            variables and the current latent state.
+
+    Returns:
+        generate_from_model (
+                Callable[[ArrayLike, ArrayLike], Tuple[Dict, ArrayLike]]):
+            Function which given two arrays, the first corresponding to all unbounded
+            global latent variables and the second corresponding to all unbounded local
+            latent variables, returns a dictionary of model parameters and an array
+            corresponding to the generated latent state sequence.
+        generate_y (
+                Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
+            Function which given three arrays, the first corresponding to all unbounded
+            global latent variables, the second corresponding to all unbounded local
+            latent variables and the third corresponding to all unbounded observation
+            noise variables, returns an array corresponding to all observed variables.
+    """
+
+    def generate_from_model(u, v):
+        params = generate_params(u)
+        x_0 = generate_x_0(params, v[0])
+
+        def step(x, v):
+            x_ = forward_func(params, v, x)
+            return x_, x_
+
+        _, x_ = lax.scan(step, x_0, v[1:])
+        return params, np.concatenate((x_0[None], x_))
+
+    def generate_y(u, v, n):
+        params, x = generate_from_model(u, v)
+        y = api.vmap(observation_func, (None, 0, 0))(params, n, x)
+        return y
+
+    return generate_from_model, generate_y
 
 
 class _AbstractDifferentiableGenerativeModelSystem(System):
@@ -947,23 +1001,24 @@ class PartiallyInvertibleStateSpaceModelSystem(
 
     Generative model is assumed to be of the form
 
-        x[0] = generate_x_0(v[0], u)
+        x[0] = generate_x_0(u, v[0])
         for t in range(dim_y):
-            x[t] = forward_func(x[t - 1], v[t], u)
-        y = obs_func(x, n, u)
+            x[t] = forward_func(u, v[t], x[t - 1])
+            y[t] = observation_func(u, n[t], x[t])
 
-    If `inv_obs_func` corresponds to the inverse of `obs_func` in its first argument,
+    If `inverse_observation_func` corresponds to the inverse of `observation_func` in
+    its final argument,
 
-        obs_func(inv_obs_func(y, n, u), n, u) == y
+        observation_func(u, n, inverse_observation_func(u, n, y)) == y
 
-    then we can define a constraint function for the generative model as follows
+    then we can define a 'split' constraint function for the generative model as follows
 
-        def constr(u, v, n):
-            x = inverse_obs_func(y, n, u)
+        def constr_split(u, v, n, y):
+            x = [inverse_observation_func(u, n[t], y[t]) for t in range(1, dim_y)]
             return array(
-                [generate_x_0(v[0]) - x[0]] +
-                [forward_func(x[t-1], v[t], u) - x[t] for t in range(1, dim_y)]
-            )
+                [generate_x_0(u, v[0]) - x[0]] +
+                [forward_func(u, v[t], x[t-1]) - x[t] for t in range(1, dim_y)]
+            ), x
 
     where `y` is a `(dim_y,)` shaped 1D array of observed variables, `u` is a `(dim_u,)`
     shaped 1D array of global latent variables, `v` is a `(dim_y,)` shaped 1D array of
@@ -974,7 +1029,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
     def __init__(
         self,
         constr_split,
-        jacob_constr_blocks_split,
+        jacob_constr_split_blocks,
         data,
         dim_u,
         neg_log_dens=standard_normal_neg_log_dens,
@@ -982,36 +1037,39 @@ class PartiallyInvertibleStateSpaceModelSystem(
     ):
         dim_y = data["y_obs"].shape[0]
 
-        if jacob_constr_blocks_split is None:
+        if jacob_constr_split_blocks is None:
 
-            def jacob_constr_blocks_split(u, v, n, data):
-                dc_du = api.jacfwd(constr_split)(u, v, n, data)
+            def jacob_constr_split_blocks(u, v, n, y):
+                dc_du = api.jacfwd(lambda u_: constr_split(u_, v, n, y)[0])(u)
                 one_vct = np.ones(dim_y)
                 alt_vct = (-1.0) ** np.arange(dim_y)
+                _, dx_dy = api.jvp(
+                    lambda y_: constr_split(u, v, n, y_)[1], (y,), (one_vct,)
+                )
                 c, dc_dv = api.jvp(
-                    lambda v_: constr_split(u, v_, n, data), (v,), (one_vct,)
+                    lambda v_: constr_split(u, v_, n, y)[0], (v,), (one_vct,)
                 )
                 _, dc_dn_1 = api.jvp(
-                    lambda n_: constr_split(u, v, n_, data), (n,), (one_vct,)
+                    lambda n_: constr_split(u, v, n_, y)[0], (n,), (one_vct,)
                 )
                 _, dc_dn_a = api.jvp(
-                    lambda n_: constr_split(u, v, n_, data), (n,), (alt_vct,)
+                    lambda n_: constr_split(u, v, n_, y)[0], (n,), (alt_vct,)
                 )
                 dc_dn = (
                     (dc_dn_1 + dc_dn_a * alt_vct) / 2,
                     (dc_dn_1[1:] - dc_dn_a[1:] * alt_vct[1:]) / 2,
                 )
-                return (dc_du, dc_dv, dc_dn), c
+                return (dc_du, dc_dv, dc_dn, dx_dy), c
 
         def constr(q):
             u, v, n = np.split(q, (dim_u, dim_u + dim_y))
-            return constr_split(u, v, n, data)
+            return constr_split(u, v, n, data["y_obs"])[0]
 
         def jacob_constr_blocks(q):
             u, v, n = np.split(q, (dim_u, dim_u + dim_y))
-            return jacob_constr_blocks_split(u, v, n, data)
+            return jacob_constr_split_blocks(u, v, n, data["y_obs"])
 
-        def lmult_by_jacob_constr(dc_du, dc_dv, dc_dn, vct):
+        def lmult_by_jacob_constr(dc_du, dc_dv, dc_dn, dx_dy, vct):
             vct_u, vct_v, vct_n = (
                 vct[:dim_u],
                 vct[dim_u : dim_u + dim_y],
@@ -1024,7 +1082,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
                 + np.pad(dc_dn[1] * vct_n[:-1], (1, 0))
             )
 
-        def rmult_by_jacob_constr(dc_du, dc_dv, dc_dn, vct):
+        def rmult_by_jacob_constr(dc_du, dc_dv, dc_dn, dx_dy, vct):
             return np.concatenate(
                 (
                     vct @ dc_du,
@@ -1033,7 +1091,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
                 )
             )
 
-        def decompose_gram(dc_du, dc_dv, dc_dn):
+        def decompose_gram(dc_du, dc_dv, dc_dn, dx_dy):
             a = dc_dn[0][:-1] * dc_dn[1]
             b = dc_dv ** 2 + dc_dn[0] ** 2 + np.pad(dc_dn[1] ** 2, (1, 0))
             cap_mtx = np.eye(dim_u) + dc_du.T @ api.vmap(
@@ -1042,7 +1100,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
             chol_cap_mtx = cholesky(cap_mtx)
             return (a, b, chol_cap_mtx)
 
-        def lmult_by_inv_gram(dc_du, dc_dv, dc_dn, a, b, chol_cap_mtx, vct):
+        def lmult_by_inv_gram(dc_du, dc_dv, dc_dn, dx_dy, a, b, chol_cap_mtx, vct):
             return tridiagonal_solve(
                 a,
                 b,
@@ -1055,7 +1113,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
             )
 
         def lmult_by_inv_jacob_product(
-            dc_du_l, dc_dv_l, dc_dn_l, dc_du_r, dc_dv_r, dc_dn_r, vct
+            dc_du_l, dc_dv_l, dc_dn_l, dx_dy_l, dc_du_r, dc_dv_r, dc_dn_r, dx_dy_r, vct
         ):
             a = dc_dn_l[1] * dc_dn_r[0][:-1]
             b = (
@@ -1077,12 +1135,13 @@ class PartiallyInvertibleStateSpaceModelSystem(
             )
 
         def log_det_sqrt_gram(q):
-            (dc_du, dc_dv, dc_dn), c = jacob_constr_blocks(q)
-            (a, b, chol_cap_mtx,) = decompose_gram(dc_du, dc_dv, dc_dn)
+            (dc_du, dc_dv, dc_dn, dx_dy), c = jacob_constr_blocks(q)
+            (a, b, chol_cap_mtx,) = decompose_gram(dc_du, dc_dv, dc_dn, dx_dy)
             return (
                 np.log(chol_cap_mtx.diagonal()).sum()
-                + tridiagonal_pos_def_log_det(a, b) / 2,
-                (c, (dc_du, dc_dv, dc_dn), (a, b, chol_cap_mtx,)),
+                + tridiagonal_pos_def_log_det(a, b) / 2
+                - np.log(abs(dx_dy)).sum(),
+                (c, (dc_du, dc_dv, dc_dn, dx_dy), (a, b, chol_cap_mtx,)),
             )
 
         super().__init__(
@@ -1096,5 +1155,96 @@ class PartiallyInvertibleStateSpaceModelSystem(
             lmult_by_inv_gram=lmult_by_inv_gram,
             lmult_by_inv_jacob_product=lmult_by_inv_jacob_product,
             log_det_sqrt_gram=log_det_sqrt_gram,
+        )
+
+
+class AutoPartiallyInvertibleStateSpaceModelSystem(
+    PartiallyInvertibleStateSpaceModelSystem
+):
+    """System class for scalar state space models with invertible observation functions.
+
+    Generative model is assumed to be of the form
+
+        x[0] = generate_x_0(u, v[0])
+        for t in range(dim_y):
+            x[t] = forward_func(u, v[t], x[t - 1])
+            y[t] = observation_func(u, n[t], x[t])
+
+    If `inverse_observation_func` corresponds to the inverse of `observation_func` in
+    its final argument,
+
+        observation_func(u, n, inverse_observation_func(u, n, y)) == y
+
+    then we can define a 'split' constraint function for the generative model as follows
+
+        def constr_split(u, v, n, y):
+            x = [inverse_observation_func(u, n[t], y[t]) for t in range(1, dim_y)]
+            return array(
+                [generate_x_0(u, v[0]) - x[0]] +
+                [forward_func(u, v[t], x[t-1]) - x[t] for t in range(1, dim_y)]
+            ), x
+
+    where `y` is a `(dim_y,)` shaped 1D array of observed variables, `u` is a `(dim_u,)`
+    shaped 1D array of global latent variables, `v` is a `(dim_y,)` shaped 1D array of
+    local latent variables and `n` is a `(dim_y,)` shaped 1D array of observation noise
+    variables.
+
+    Compared to the `PartiallyInvertibleStateSpaceModelSystem` class this class
+    automatically constructs the required 'split' constraint function (and function to
+    evaluate the non-zero blocks of its Jacobian) using JAX operators from functions
+    `generate_x_0`, `forward_func` and `inverse_observation_func`. This simplifies
+    constructing a system object but potentially gives a performance hit compared to
+    manually constructing these functions (both at compile and run time).
+    """
+
+    def __init__(
+        self,
+        generate_x_0,
+        forward_func,
+        inverse_observation_func,
+        data,
+        dim_u,
+        neg_log_dens=standard_normal_neg_log_dens,
+        grad_neg_log_dens=standard_normal_grad_neg_log_dens,
+    ):
+        def constr_split(u, v, n, y):
+            x = api.vmap(inverse_observation_func, (None, 0, 0))(u, n, y)
+            return (
+                np.concatenate(
+                    (
+                        (generate_x_0(u, v[0]) - x[0])[None],
+                        api.vmap(forward_func, (None, 0, 0))(u, v[1:], x[:-1]) - x[1:],
+                    )
+                ),
+                x,
+            )
+
+        def jacob_constr_split_blocks(u, v, n, y):
+            x, (dx_du, dx_dn, dx_dy) = api.vmap(
+                api.value_and_grad(inverse_observation_func, (0, 1, 2)), (None, 0, 0)
+            )(u, n, y)
+            x0, (dx0_du, dx0_dv0) = api.value_and_grad(generate_x_0, (0, 1))(u, v[0])
+            xp, (dxp_du, dxp_dvp, dxp_dxm) = api.vmap(
+                api.value_and_grad(forward_func, (0, 1, 2)), (None, 0, 0)
+            )(u, v[1:], x[:-1])
+            c = np.concatenate((np.atleast_1d(x0 - x[0]), xp - x[1:]))
+            dc_du = np.concatenate(
+                (
+                    (dx0_du - dx_du[0])[None],
+                    dxp_du + dxp_dxm[:, None] * dx_du[:-1] - dx_du[1:],
+                ),
+                0,
+            )
+            dc_dv = np.concatenate(((dx0_dv0)[None], dxp_dvp))
+            dc_dn = (-dx_dn, dxp_dxm * dx_dn[:-1])
+            return (dc_du, dc_dv, dc_dn, dx_dy), c
+
+        super().__init__(
+            constr_split=constr_split,
+            jacob_constr_split_blocks=jacob_constr_split_blocks,
+            data=data,
+            dim_u=dim_u,
+            neg_log_dens=neg_log_dens,
+            grad_neg_log_dens=grad_neg_log_dens,
         )
 

@@ -214,6 +214,57 @@ def _set_up_hmc_mici_objects(args, neg_log_dens_hmc, grad_neg_log_dens_hmc):
     return system, integrator, adapters, monitor_stats
 
 
+def get_ssm_constrained_system_class_and_kwargs(
+    use_manual_constraint_and_jacobian,
+    generate_params,
+    generate_x_0,
+    forward_func,
+    inverse_observation_func,
+    constr_split,
+    jacob_constr_split_blocks,
+):
+    if use_manual_constraint_and_jacobian:
+        constrained_system_class = mlift.PartiallyInvertibleStateSpaceModelSystem
+        constrained_system_kwargs = {
+            "constr_split": constr_split,
+            "jacob_constr_split_blocks": jacob_constr_split_blocks,
+        }
+    else:
+        constrained_system_class = mlift.AutoPartiallyInvertibleStateSpaceModelSystem
+        constrained_system_kwargs = {
+            "generate_x_0": lambda u, v_0: generate_x_0(generate_params(u), v_0),
+            "forward_func": lambda u, v, x: forward_func(generate_params(u), v, x),
+            "inverse_observation_func": lambda u, n, y: inverse_observation_func(
+                generate_params(u), n, y
+            ),
+        }
+    return constrained_system_class, constrained_system_kwargs
+
+
+def add_ssm_specific_args(parser):
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument(
+        "--use-manual-constraint-and-jacobian",
+        dest="use_manual_constraint_and_jacobian",
+        action='store_true',
+        help=(
+            "Use manually specifed split constraint and Jacobian functions rather "
+            "than automatically generated function."
+        ),
+    )
+    group.add_argument(
+        "--use-auto-constraint-and-jacobian",
+        dest="use_manual_constraint_and_jacobian",
+        action='store_false',
+        help=(
+            "Use automatically generated split constraint and Jacobian functions rather"
+            " than manually defined functions generated functions."
+        ),
+    )
+    parser.set_defaults(use_manual_constraint_and_jacobian=True)
+    return parser
+
+
 def precompile_jax_functions(q, args, system):
     start_time = time.time()
     if args.algorithm == "chmc":
@@ -333,7 +384,7 @@ def run_experiment(
     (
         neg_log_dens_hmc,
         grad_neg_log_dens_hmc,
-    ) = mlift.construct_euclidean_metric_system_functions(
+    ) = mlift.construct_mici_system_neg_log_dens_functions(
         lambda u: posterior_neg_log_dens(u, data)
     )
 

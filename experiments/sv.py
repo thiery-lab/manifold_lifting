@@ -25,45 +25,66 @@ def generate_params(u):
     }
 
 
-def generate_from_model(u, v):
-    params = generate_params(u)
-    x_0 = params["μ"] + (params["σ"] / (1 - params["ϕ"] ** 2) ** 0.5) * v[0]
-
-    def step(x, v):
-        x_ = params["μ"] + params["ϕ"] * (x - params["μ"]) + params["σ"] * v
-        return x_, x_
-
-    _, x_ = lax.scan(step, x_0, v[1:])
-
-    return params, np.concatenate((x_0[None], x_))
+def generate_x_0(params, v_0):
+    return params["μ"] + (params["σ"] / (1 - params["ϕ"] ** 2) ** 0.5) * v_0
 
 
-def generate_y(u, v, n):
+def forward_func(params, v, x):
+    return params["μ"] + params["ϕ"] * (x - params["μ"]) + params["σ"] * v
+
+
+def observation_func(params, n, x):
+    return np.exp(x / 2) * n
+
+
+def inverse_observation_func(params, n, y):
+    return 2 * np.log(y / n)
+
+
+generate_from_model, generate_y = mlift.construct_state_space_model_generators(
+    generate_params=generate_params,
+    generate_x_0=generate_x_0,
+    forward_func=forward_func,
+    observation_func=observation_func,
+)
+
+
+def posterior_neg_log_dens(q, data):
+    u, v = q[:dim_u], q[dim_u:]
     _, x = generate_from_model(u, v)
-    y = np.exp(x / 2) * n
-    return y
-
-
-def constr(u, v, n, data):
-    params = generate_params(u)
-    x = 2 * np.log(data["y_obs"] / n)
-    return np.concatenate(
-        (
-            (params["μ"] + (params["σ"] / (1 - params["ϕ"] ** 2) ** 0.5) * v[0] - x[0])[
-                None
-            ],
-            params["μ"]
-            + params["ϕ"] * (x[:-1] - params["μ"])
-            + params["σ"] * v[1:]
-            - x[1:],
-        )
+    return (
+        0.5 * ((data["y_obs"] / np.exp(x / 2)) ** 2).sum()
+        + (x / 2).sum()
+        + (q ** 2).sum() / 2
     )
 
 
-def jacob_constr_blocks(u, v, n, data):
-    dim_y = data["y_obs"].shape[0]
+def constr_split(u, v, n, y):
+    params = generate_params(u)
+    x = 2 * np.log(y / n)
+    return (
+        np.concatenate(
+            (
+                (
+                    params["μ"]
+                    + (params["σ"] / (1 - params["ϕ"] ** 2) ** 0.5) * v[0]
+                    - x[0]
+                )[None],
+                params["μ"]
+                + params["ϕ"] * (x[:-1] - params["μ"])
+                + params["σ"] * v[1:]
+                - x[1:],
+            )
+        ),
+        x,
+    )
+
+
+def jacob_constr_split_blocks(u, v, n, y):
+    dim_y = y.shape[0]
     params, dparams_du = api.jvp(generate_params, (u,), (np.ones(dim_u),))
-    x = 2 * np.log(data["y_obs"] / n)
+    x = 2 * np.log(y / n)
+    dx_dy = 2 / y
     one_minus_ϕ_sq = 1 - params["ϕ"] ** 2
     sqrt_one_minus_ϕ_sq = one_minus_ϕ_sq ** 0.5
     v_0_over_sqrt_one_minus_ϕ_sq = v[0] / sqrt_one_minus_ϕ_sq
@@ -105,17 +126,7 @@ def jacob_constr_blocks(u, v, n, data):
             params["μ"] + params["ϕ"] * x_minus_μ + params["σ"] * v[1:] - x[1:],
         )
     )
-    return (dc_du, dc_dv, dc_dn), c
-
-
-def posterior_neg_log_dens(q, data):
-    u, v = q[:dim_u], q[dim_u:]
-    _, x = generate_from_model(u, v)
-    return (
-        0.5 * ((data["y_obs"] / np.exp(x / 2)) ** 2).sum()
-        + (x / 2).sum()
-        + (q ** 2).sum() / 2
-    )
+    return (dc_du, dc_dv, dc_dn, dx_dy), c
 
 
 def sample_initial_states(rng, args, data):
@@ -146,6 +157,7 @@ if __name__ == "__main__":
     parser = common.set_up_argparser_with_standard_arguments(
         "Run stochastic-volatility model simulated data experiment"
     )
+    common.add_ssm_specific_args(parser)
     args = parser.parse_args()
 
     # Load data
@@ -162,9 +174,23 @@ if __name__ == "__main__":
     def trace_func(state):
         u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_y]
         params = generate_params(u)
-        return {**params,  "u": u, "v": v}
+        return {**params, "u": u, "v": v}
 
     # Run experiment
+
+    (
+        constrained_system_class,
+        constrained_system_kwargs,
+    ) = common.get_ssm_constrained_system_class_and_kwargs(
+        args.use_manual_constraint_and_jacobian,
+        generate_params,
+        generate_x_0,
+        forward_func,
+        inverse_observation_func,
+        constr_split,
+        jacob_constr_split_blocks,
+    )
+    constrained_system_kwargs.update(data=data, dim_u=dim_u)
 
     final_states, traces, stats, summary_dict = common.run_experiment(
         args=args,
@@ -175,14 +201,8 @@ if __name__ == "__main__":
         var_names=["μ", "σ", "ϕ"],
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
-        constrained_system_class=mlift.PartiallyInvertibleStateSpaceModelSystem,
-        constrained_system_kwargs={
-            "constr_split": constr,
-            "jacob_constr_blocks_split": jacob_constr_blocks,
-            "data": data,
-            "dim_u": dim_u
-
-        },
+        constrained_system_class=constrained_system_class,
+        constrained_system_kwargs=constrained_system_kwargs,
         sample_initial_states=sample_initial_states,
     )
 

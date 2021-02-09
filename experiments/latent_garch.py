@@ -25,42 +25,57 @@ def generate_params(u):
     }
 
 
-def generate_from_model(u, v):
-    params = generate_params(u)
-    x_0 = v[0]
-
-    def step(x, v):
-        x_ = np.sqrt(params["α"] + params["β"] * x ** 2) * v
-        return x_, x_
-
-    _, x_ = lax.scan(step, x_0, v[1:])
-
-    x = np.concatenate((np.array([x_0]), x_))
-
-    return params, x
+def generate_x_0(params, v_0):
+    return v_0
 
 
-def generate_y(u, v, n, data):
+def forward_func(params, v, x):
+    return np.sqrt(params["α"] + params["β"] * x ** 2) * v
+
+
+def observation_func(params, n, x):
+    return x + params["σ"] * n
+
+
+def inverse_observation_func(params, n, y):
+    return y - params["σ"] * n
+
+
+generate_from_model, generate_y = mlift.construct_state_space_model_generators(
+    generate_params=generate_params,
+    generate_x_0=generate_x_0,
+    forward_func=forward_func,
+    observation_func=observation_func,
+)
+
+
+def posterior_neg_log_dens(q, data):
+    u, v = q[:dim_u], q[dim_u:]
     params, x = generate_from_model(u, v)
-    y = x + params["σ"] * n
-    return y
+    return (
+        ((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
+    ).sum() + (q ** 2).sum() / 2
 
 
-def constr(u, v, n, data):
+def constr_split(u, v, n, y):
     params = generate_params(u)
-    x = data["y_obs"] - params["σ"] * n
-    return np.concatenate(
-        (
-            (v[0] - x[0])[None],
-            np.sqrt(params["α"] + params["β"] * x[:-1] ** 2) * v[1:] - x[1:],
-        )
+    x = y - params["σ"] * n
+    return (
+        np.concatenate(
+            (
+                (v[0] - x[0])[None],
+                np.sqrt(params["α"] + params["β"] * x[:-1] ** 2) * v[1:] - x[1:],
+            )
+        ),
+        x,
     )
 
 
-def jacob_constr_blocks(u, v, n, data):
+def jacob_constr_split_blocks(u, v, n, y):
     params, dparams_du = api.jvp(generate_params, (u,), (np.ones(dim_u),))
-    dim_y = data["y_obs"].shape[0]
-    x = data["y_obs"] - params["σ"] * n
+    dim_y = y.shape[0]
+    x = y - params["σ"] * n
+    dx_dy = np.ones(dim_y)
     h = np.sqrt(params["α"] + params["β"] * x[:-1] ** 2)
     dc_du = np.stack(
         (
@@ -84,15 +99,7 @@ def jacob_constr_blocks(u, v, n, data):
         -params["β"] * params["σ"] * x[:-1] * v[1:] / h,
     )
     c = np.concatenate((np.array([v[0] - x[0]]), h * v[1:] - x[1:]))
-    return (dc_du, dc_dv, dc_dn), c
-
-
-def posterior_neg_log_dens(q, data):
-    u, v = q[:dim_u], q[dim_u:]
-    params, x = generate_from_model(u, v)
-    return (
-        ((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
-    ).sum() + (q ** 2).sum() / 2
+    return (dc_du, dc_dv, dc_dn, dx_dy), c
 
 
 def sample_initial_states(rng, args, data):
@@ -129,6 +136,7 @@ if __name__ == "__main__":
         default=1.0,
         help="Standard deviation of observation noise to use in simulated data",
     )
+    common.add_ssm_specific_args(parser)
     args = parser.parse_args()
 
     # Load data
@@ -152,6 +160,20 @@ if __name__ == "__main__":
 
     # Run experiment
 
+    (
+        constrained_system_class,
+        constrained_system_kwargs,
+    ) = common.get_ssm_constrained_system_class_and_kwargs(
+        args.use_manual_constraint_and_jacobian,
+        generate_params,
+        generate_x_0,
+        forward_func,
+        inverse_observation_func,
+        constr_split,
+        jacob_constr_split_blocks,
+    )
+    constrained_system_kwargs.update(data=data, dim_u=dim_u)
+
     final_states, traces, stats, summary_dict = common.run_experiment(
         args=args,
         data=data,
@@ -162,13 +184,8 @@ if __name__ == "__main__":
         var_names=["α", "β", "σ"],
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
-        constrained_system_class=mlift.PartiallyInvertibleStateSpaceModelSystem,
-        constrained_system_kwargs={
-            "constr_split": constr,
-            "jacob_constr_blocks_split": jacob_constr_blocks,
-            "data": data,
-            "dim_u": dim_u,
-        },
+        constrained_system_class=constrained_system_class,
+        constrained_system_kwargs=constrained_system_kwargs,
         sample_initial_states=sample_initial_states,
     )
 
