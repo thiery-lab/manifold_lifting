@@ -282,8 +282,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--init-spike-time-diff-threshold",
-        type=int,
-        default=1,
+        type=float,
+        default=1.,
         help="Maximum difference between spike times of initial state and observations",
     )
     args = parser.parse_args()
