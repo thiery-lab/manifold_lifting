@@ -6,6 +6,7 @@ import json
 import pickle
 import time
 import timeit
+from collections import namedtuple
 import arviz
 import numpy as np
 import mici
@@ -214,6 +215,32 @@ def _set_up_hmc_mici_objects(args, neg_log_dens_hmc, grad_neg_log_dens_hmc):
     return system, integrator, adapters, monitor_stats
 
 
+PriorSpecification = namedtuple(
+    "PriorSpecification", ("shape", "transform"), defaults=((), None)
+)
+
+
+def get_param_generator_and_dimension(param_prior_specifications):
+    dim_u = sum(
+        int(np.product(spec.shape)) for spec in param_prior_specifications.values()
+    )
+
+    def generate_params(u):
+        params = {}
+        i = 0
+        for (name, spec,) in param_prior_specifications.items():
+            size = int(np.product(spec.shape))
+            u_slice = u[i] if spec.shape == () else u[i : i + size].reshape(spec.shape)
+            i += size
+            if spec.transform is not None:
+                params[name] = spec.transform(u_slice)
+            else:
+                params[name] = u_slice
+        return params
+
+    return generate_params, dim_u
+
+
 def get_ssm_constrained_system_class_and_kwargs(
     use_manual_constraint_and_jacobian,
     generate_params,
@@ -246,7 +273,7 @@ def add_ssm_specific_args(parser):
     group.add_argument(
         "--use-manual-constraint-and-jacobian",
         dest="use_manual_constraint_and_jacobian",
-        action='store_true',
+        action="store_true",
         help=(
             "Use manually specifed split constraint and Jacobian functions rather "
             "than automatically generated function."
@@ -255,7 +282,7 @@ def add_ssm_specific_args(parser):
     group.add_argument(
         "--use-auto-constraint-and-jacobian",
         dest="use_manual_constraint_and_jacobian",
-        action='store_false',
+        action="store_false",
         help=(
             "Use automatically generated split constraint and Jacobian functions rather"
             " than manually defined functions generated functions."
