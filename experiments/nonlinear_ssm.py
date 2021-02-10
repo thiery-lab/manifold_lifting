@@ -22,7 +22,7 @@ def generate_params(u):
         "μ": u[0],
         "γ": normal_to_half_normal(u[1]),
         "ρ": normal_to_uniform(u[2]) * 2 - 1,
-        "σ": normal_to_half_normal(u[3]),
+        "σ": normal_to_half_normal(u[3]) * 3,
     }
 
 
