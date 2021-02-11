@@ -1,4 +1,7 @@
-"""Lotka-Volterra predator-prey model."""
+"""Lotka-Volterra predator-prey model.
+
+Source: https://github.com/stan-dev/example-models/
+"""
 
 import os
 from collections import namedtuple
