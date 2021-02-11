@@ -7,6 +7,8 @@ import pickle
 import time
 import timeit
 from collections import namedtuple
+from urllib.request import urlopen
+from urllib.error import HTTPError
 import arviz
 import numpy as np
 import mici
@@ -129,6 +131,84 @@ def set_up_output_directory(args, experiment_name, dir_prefix=None):
     with open(os.path.join(output_dir, "args.json"), "w") as f:
         json.dump(vars(args), f, indent=2)
     return output_dir
+
+
+def normalize(x):
+    return (x - x.mean(0)) / x.std(0)
+
+
+def load_data_or_download(data_dir, data_file, fallback_urls, **loadtxt_kwargs):
+    data_path = os.path.join(data_dir, data_file)
+    if not os.path.exists(data_path):
+        downloaded = False
+        for url in fallback_urls:
+            try:
+                with urlopen(url) as response, open(data_path, 'wb') as out_file:
+                    out_file.write(response.read())
+                downloaded = True
+                break
+            except HTTPError:
+                pass
+        if not downloaded:
+            raise FileNotFoundError(
+                f'Data file {data_file} does not exist in {data_dir} and could not be '
+                f'downloaded from {fallback_urls}.'
+            )
+    return np.loadtxt(data_path, **loadtxt_kwargs)
+
+
+def load_regression_data(args, rng):
+    if args.dataset == "yacht":
+        raw_data = load_data_or_download(
+            data_dir=args.data_dir,
+            data_file="yacht_hydrodynamics.data",
+            fallback_urls=(
+                "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+                "00243/yacht_hydrodynamics.data",
+            )
+        )
+        raw_data = np.loadtxt(os.path.join(args.data_dir, "yacht_hydrodynamics.data"))
+        x_indices = slice(0, 6)
+        y_index = -1
+        y_transform = np.log
+    elif args.dataset == "slump":
+        raw_data = load_data_or_download(
+            data_dir=args.data_dir,
+            data_file="slump_test.data",
+            fallback_urls=(
+                "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+                "concrete/slump/slump_test.data",
+            ),
+            delimiter=",",
+            skiprows=1
+        )
+        x_indices = slice(1, 8)
+        y_index = 9
+        y_transform = lambda y: y * 0.01
+    elif args.dataset == "marthe":
+        raw_data = load_data_or_download(
+            data_dir=args.data_dir,
+            data_file="marthedata.txt",
+            fallback_urls=(
+                "http://gdr-mascotnum.math.cnrs.fr/data2/benchmarks/marthe.txt",
+                "https://www.sfu.ca/~ssurjano/Code/marthedata.txt"
+            ),
+            delimiter="\t",
+            skiprows=1
+        )
+        raw_data = np.loadtxt(
+            os.path.join(args.data_dir, "marthedata.txt"), delimiter="\t", skiprows=1
+        )
+        x_indices = slice(0, 20)
+        y_index = -1
+        y_transform = lambda x: x
+    else:
+        raise ValueError(f"Unrecognised dataset: {args.dataset}")
+    permuted_data = rng.permutation(raw_data)
+    return {
+        "x": normalize(permuted_data[:: args.data_subsample, x_indices]),
+        "y_obs": y_transform(permuted_data[:: args.data_subsample, y_index]),
+    }
 
 
 def set_up_logger(output_dir):
