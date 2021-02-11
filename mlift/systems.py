@@ -931,7 +931,8 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
         def jacob_constr_blocks(q):
             u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
             covar, dcovar_du = api.vmap(
-                api.partial(api.jvp, covar_func, (u,)), out_axes=(None, 1)
+                api.partial(api.jvp, lambda u: covar_func(u, data), (u,)),
+                out_axes=(None, 1),
             )((np.identity(dim_u),))
             chol_covar = cholesky(covar)
             s, ds_du = api.value_and_grad(noise_scale_func)(u)
