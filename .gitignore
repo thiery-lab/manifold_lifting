@@ -1,3 +1,10 @@
+# Ignore notebooks in root-directory
+/*.ipynb
+
+# Ignore experiment results
+
+/experiments/results
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
