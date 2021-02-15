@@ -150,7 +150,7 @@ if __name__ == "__main__":
         lambda q: extended_prior_neg_log_dens(q, data)
     )
 
-    final_states, traces, stats, summary_dict = common.run_experiment(
+    final_states, traces, stats, summary_dict, sampler = common.run_experiment(
         args=args,
         data=data,
         dim_u=dim_u,

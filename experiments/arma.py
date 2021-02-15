@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     # Run experiment
 
-    final_states, traces, stats, summary_dict = common.run_experiment(
+    final_states, traces, stats, summary_dict, sampler = common.run_experiment(
         args=args,
         data=data,
         dim_u=dim_u,

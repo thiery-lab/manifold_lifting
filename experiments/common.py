@@ -559,4 +559,4 @@ def run_experiment(
 
     print(summary)
 
-    return final_states, traces, stats, summary_dict
+    return final_states, traces, stats, summary_dict, sampler
