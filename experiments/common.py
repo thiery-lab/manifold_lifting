@@ -479,6 +479,7 @@ def run_experiment(
     constrained_system_class,
     constrained_system_kwargs,
     sample_initial_states,
+    extended_prior_neg_log_dens=None,
     dir_prefix=None,
 ):
     # Set up output directory and logger
@@ -493,6 +494,16 @@ def run_experiment(
     ) = mlift.construct_mici_system_neg_log_dens_functions(
         lambda u: posterior_neg_log_dens(u, data)
     )
+
+    if extended_prior_neg_log_dens is not None:
+        (
+            neg_log_dens_chmc,
+            grad_neg_log_dens_chmc,
+        ) = mlift.construct_mici_system_neg_log_dens_functions(
+            lambda q: extended_prior_neg_log_dens(q, data)
+        )
+        constrained_system_kwargs['neg_log_dens'] = neg_log_dens_chmc
+        constrained_system_kwargs['grad_neg_log_dens'] = grad_neg_log_dens_chmc
 
     system, integrator, sampler, adapters, monitor_stats = set_up_mici_objects(
         args,
