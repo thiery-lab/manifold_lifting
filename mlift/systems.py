@@ -901,10 +901,10 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
             noise_transform_func (callable): Differentiable function which takes a
                 single argument, a length `dim_y` 1D array and outputs a `(dim_y,)` 1D
                 array, with the function acting elementwise such that it has a diagonal
-                Jacobian.
-            data (dict): Dictionary of fixed values used in constructing the covariance
-                matrix. Must also contain an entry with key 'y_obs' corresponding to 1D
-                array of shape `(dim_y,)` of observed variable values to condition on.
+                Jacobian. If `None` assumed to be the identity function.
+            data (dict): Dictionary of fixed values used in the model. Must also contain
+                an entry with key 'y_obs' corresponding to 1D array of shape `(dim_y,)`
+                of observed variable values to condition on.
             dim_u (int): Dimension of latent variable array `u`.
             neg_log_dens (callable): Function which returns the negative logarithm of
                 the (Lebesgue) density of the joint prior distribution on the global
@@ -926,6 +926,7 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
 
         def generate_y(u, v, n):
             covar = covar_func(u, data)
+            t = noise_transform_func(n) if noise_transform_func is not None else n
             return cholesky(covar) @ v + noise_scale_func(u, data) * t
 
         def constr(q):
@@ -940,7 +941,10 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
             )((np.identity(dim_u),))
             chol_covar = cholesky(covar)
             s, ds_du = api.value_and_grad(noise_scale_func)(u, data)
-            t, dt_dn = api.jvp(noise_transform_func, (n,), (np.ones(dim_y),))
+            if noise_transform_func is not None:
+                t, dt_dn = api.jvp(noise_transform_func, (n,), (np.ones(dim_y),))
+            else:
+                t, dt_dn = n, np.ones(dim_y)
             dy_du = ds_du[None, :] * t[:, None] + api.vmap(
                 jvp_cholesky_mtx_mult_by_vct, (1, None, None), 1
             )(dcovar_du, chol_covar, v)
