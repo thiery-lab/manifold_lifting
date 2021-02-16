@@ -8,6 +8,7 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
+from mlift.distributions import log_normal
 from mlift.ode import integrate_ode_rk4
 from experiments import common
 
@@ -15,20 +16,23 @@ jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-param_prior_specifications = {
-    "α": common.PriorSpecification(shape=(), transform=np.exp),
-    "β": common.PriorSpecification(shape=(), transform=np.exp),
-    "γ": common.PriorSpecification(shape=(), transform=np.exp),
-    "δ": common.PriorSpecification(shape=(), transform=lambda u: np.exp(u - 1)),
-    "ϵ": common.PriorSpecification(shape=(), transform=lambda u: np.exp(u - 2)),
-    "ζ": common.PriorSpecification(shape=(), transform=lambda u: np.exp(u - 2)),
-    "σ": common.PriorSpecification(shape=(), transform=lambda u: np.exp(u - 1)),
-    "x_init": common.PriorSpecification(shape=(2,), transform=None),
+prior_specifications = {
+    "α": common.PriorSpecification(distribution=log_normal(0, 1)),
+    "β": common.PriorSpecification(distribution=log_normal(0, 1)),
+    "γ": common.PriorSpecification(distribution=log_normal(0, 1)),
+    "δ": common.PriorSpecification(distribution=log_normal(-1, 1)),
+    "ϵ": common.PriorSpecification(distribution=log_normal(-2, 1)),
+    "ζ": common.PriorSpecification(distribution=log_normal(-2, 1)),
+    "σ": common.PriorSpecification(distribution=log_normal(-1, 1)),
+    "x_init": common.PriorSpecification(shape=(2,), distribution=log_normal(0, 1)),
 }
 
-generate_params, dim_u = common.get_param_generator_and_dimension(
-    param_prior_specifications
-)
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def dx_dt(x, t, params):
@@ -45,7 +49,7 @@ def observation_func(x):
 
 
 def generate_from_model(u, data):
-    params = generate_params(u)
+    params = generate_params(u, data)
     x_seq = integrate_ode_rk4(
         dx_dt, params["x_init"], data["t_seq"], params, data["dt"]
     )
@@ -57,19 +61,25 @@ def generate_y(u, n, data):
     return observation_func(x) + params["σ"] * n
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    u, n = q[:dim_u], q[dim_u:]
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
     y_mean = observation_func(x)
     return (
         ((y_mean - data["y_obs"]) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
-    ).sum() + np.sum(u ** 2) / 2
+    ).sum() + prior_neg_log_dens(u, data)
 
 
 def sample_initial_states(rng, args, data):
     """Sample initial states from prior."""
     init_states = []
     for _ in range(args.num_chain):
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         if args.algorithm == "chmc":
             params, x = generate_from_model(u, data)
             y_mean = observation_func(x)
@@ -106,6 +116,7 @@ if __name__ == "__main__":
         onp.load(os.path.join(args.data_dir, "fitzhugh-nagumo-simulated-data.npz"))
     )
     data["y_obs"] = data["y_mean_obs"] + args.obs_noise_std * data["n_obs"]
+    dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
 
@@ -115,21 +126,22 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u}
 
     # Run experiment
 
-    final_states, traces, stats, summary_dict, sampler, sampler = common.run_experiment(
+    final_states, traces, stats, summary_dict, sampler = common.run_experiment(
         args=args,
         data=data,
         dim_u=dim_u,
         rng=rng,
         experiment_name="fitzhugh_nagumo",
         dir_prefix=f"σ_{args.obs_noise_std:.0e}",
-        var_names=list(param_prior_specifications.keys()),
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,

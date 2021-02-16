@@ -11,6 +11,7 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
+from mlift.distributions import truncated_normal, log_normal
 from mlift.ode import integrate_ode_rk4
 from experiments import common
 
@@ -18,20 +19,24 @@ jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-param_prior_specifications = {
-    "α": common.PriorSpecification(shape=(), transform=lambda u: 0.5 * u + 1),
-    "β": common.PriorSpecification(shape=(), transform=lambda u: 0.05 * u + 0.05),
-    "γ": common.PriorSpecification(shape=(), transform=lambda u: 0.5 * u + 1),
-    "δ": common.PriorSpecification(shape=(), transform=lambda u: 0.05 * u + 0.05),
-    "σ": common.PriorSpecification(shape=(2,), transform=lambda u: np.exp(u - 1)),
+prior_specifications = {
+    "α": common.PriorSpecification(distribution=truncated_normal(1, 0.5, 0)),
+    "β": common.PriorSpecification(distribution=truncated_normal(0.05, 0.05, 0)),
+    "γ": common.PriorSpecification(distribution=truncated_normal(1, 0.5, 0)),
+    "δ": common.PriorSpecification(distribution=truncated_normal(0.05, 0.05, 0)),
+    "σ": common.PriorSpecification(shape=(2,), distribution=log_normal(-1, 1)),
     "x_init": common.PriorSpecification(
-        shape=(2,), transform=lambda u: np.exp(u + np.log(10))
+        shape=(2,), distribution=log_normal(np.log(10), 1)
     ),
 }
 
-generate_params, dim_u = common.get_param_generator_and_dimension(
-    param_prior_specifications
-)
+
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def dx_dt(x, t, params):
@@ -48,7 +53,7 @@ def observation_func(x):
 
 
 def generate_from_model(u, data):
-    params = generate_params(u)
+    params = generate_params(u, data)
     x_seq = integrate_ode_rk4(
         dx_dt, params["x_init"], data["t_seq"], params, data["dt"]
     )
@@ -57,29 +62,36 @@ def generate_from_model(u, data):
 
 def generate_y(u, n, data):
     params, x = generate_from_model(u, data)
-    return observation_func(x) + np.repeat(params["σ"], x.shape[0]) * n
+    return observation_func(x) + np.tile(params["σ"], x.shape[0]) * n
+
+
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    u, n = q[:dim_u], q[dim_u:]
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
 
 
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
     y_mean = observation_func(x)
-    σ_rep = np.repeat(params["σ"], x.shape[0])
-    return (((y_mean - data["y_obs"]) / σ_rep) ** 2 / 2 + np.log(σ_rep)).sum() + np.sum(
-        u ** 2
-    ) / 2
+    σ_rep = np.tile(params["σ"], x.shape[0])
+    return (
+        prior_neg_log_dens(u, data)
+        + (((y_mean - data["y_obs"]) / σ_rep) ** 2 / 2 + np.log(σ_rep)).sum()
+    )
 
 
 def sample_initial_states(rng, args, data):
     """Sample initial states from prior."""
     init_states = []
     while len(init_states) < args.num_chain:
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         params, x = generate_from_model(u, data)
         y_mean = observation_func(x)
         if not onp.all(np.isfinite(y_mean)):
             continue
         if args.algorithm == "chmc":
-            σ_rep = onp.repeat(params["σ"], x.shape[0])
+            σ_rep = onp.tile(params["σ"], x.shape[0])
             n = (data["y_obs"] - y_mean) / σ_rep
             q = onp.concatenate((u, onp.asarray(n)))
             assert (
@@ -104,6 +116,7 @@ if __name__ == "__main__":
     # Load data
 
     data = dict(onp.load(os.path.join(args.data_dir, "lotka-volterra-hudson-data.npz")))
+    dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
 
@@ -113,7 +126,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u}
 
     # Run experiment
@@ -124,9 +137,10 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="lotka_volterra",
-        var_names=list(param_prior_specifications.keys()),
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,

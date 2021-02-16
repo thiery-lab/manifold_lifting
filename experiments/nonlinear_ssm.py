@@ -6,39 +6,42 @@ import jax.config
 import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
-from mlift.transforms import normal_to_half_normal, normal_to_uniform
 import mlift
+from mlift.distributions import normal, half_normal, uniform
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-dim_u = 4
+prior_specifications = {
+    "μ": common.PriorSpecification(distribution=normal(0, 1)),
+    "γ": common.PriorSpecification(distribution=half_normal(1)),
+    "ρ": common.PriorSpecification(distribution=uniform(-1, 1)),
+    "σ": common.PriorSpecification(distribution=half_normal(3)),
+}
+
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
-def generate_params(u):
-    return {
-        "μ": u[0],
-        "γ": normal_to_half_normal(u[1]),
-        "ρ": normal_to_uniform(u[2]) * 2 - 1,
-        "σ": normal_to_half_normal(u[3]) * 3,
-    }
-
-
-def generate_x_0(params, v_0):
+def generate_x_0(params, v_0, data):
     return params["μ"] + (params["γ"] / (1 - params["ρ"] ** 2) ** 0.5) * v_0
 
 
-def forward_func(params, v, x):
+def forward_func(params, v, x, data):
     return params["μ"] + params["ρ"] * (x - params["μ"]) + params["γ"] * v
 
 
-def observation_func(params, n, x):
+def observation_func(params, n, x, data):
     return np.exp(x) + params["σ"] * n
 
 
-def inverse_observation_func(params, n, y):
+def inverse_observation_func(params, n, y, data):
     return np.log(y - params["σ"] * n)
 
 
@@ -50,16 +53,28 @@ generate_from_model, generate_y = mlift.construct_state_space_model_generators(
 )
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    dim_y = data["y_obs"].shape[0]
+    u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
+    return prior_neg_log_dens(u, data) + (v ** 2).sum() / 2 + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
     u, v = q[:dim_u], q[dim_u:]
-    params, x = generate_from_model(u, v)
+    params, x = generate_from_model(u, v, data)
     return (
-        ((data["y_obs"] - np.exp(x)) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
-    ).sum() + (q ** 2).sum() / 2
+        prior_neg_log_dens(u, data)
+        + (v ** 2).sum() / 2
+        + (
+            ((data["y_obs"] - np.exp(x)) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
+        ).sum()
+    )
 
 
-def constr_split(u, v, n, y):
-    params = generate_params(u)
+def constr_split(u, v, n, y, data):
+    params = generate_params(u, data)
     x = np.log(y - params["σ"] * n)
     return (
         np.concatenate(
@@ -79,9 +94,12 @@ def constr_split(u, v, n, y):
     )
 
 
-def jacob_constr_split_blocks(u, v, n, y):
+def jacob_constr_split_blocks(u, v, n, y, data):
+    dim_u = compute_dim_u(data)
     dim_y = y.shape[0]
-    params, dparams_du = api.jvp(generate_params, (u,), (np.ones(dim_u),))
+    params, dparams_du = api.jvp(
+        lambda u_: generate_params(u_, data), (u,), (np.ones(dim_u),)
+    )
     exp_x = y - params["σ"] * n
     x = np.log(exp_x)
     dx_dy = 1 / exp_x
@@ -141,10 +159,10 @@ def sample_initial_states(rng, args, data):
     init_states = []
     dim_y = data["y_obs"].shape[0]
     for _ in range(args.num_chain):
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         v = rng.standard_normal(dim_y)
         if args.algorithm == "chmc":
-            params, x = generate_from_model(u, v)
+            params, x = generate_from_model(u, v, data)
             n = (data["y_obs"] - onp.exp(x)) / params["σ"]
             q = onp.concatenate((u, v, onp.asarray(n)))
             assert (
@@ -179,6 +197,7 @@ if __name__ == "__main__":
         onp.load(os.path.join(args.data_dir, "nonlinear-ssm-simulated-data.npz"))
     )
     data["y_obs"] = onp.exp(data["x_obs"]) + args.obs_noise_std * data["n_obs"]
+    dim_u = compute_dim_u(data)
     dim_y = data["y_obs"].shape[0]
 
     # Set up seeded random number generator
@@ -189,7 +208,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_y]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u, "v": v}
 
     # Run experiment
@@ -215,9 +234,10 @@ if __name__ == "__main__":
         rng=rng,
         experiment_name="nonlinear_ssm",
         dir_prefix=f"σ_{args.obs_noise_std:.0e}",
-        var_names=["μ", "ρ", "γ", "σ"],
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=constrained_system_class,
         constrained_system_kwargs=constrained_system_kwargs,
         sample_initial_states=sample_initial_states,

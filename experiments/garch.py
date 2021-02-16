@@ -12,27 +12,31 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
-from mlift.transforms import normal_to_half_cauchy, normal_to_uniform
+from mlift.distributions import normal, uniform, half_cauchy
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-dim_u = 4
+prior_specifications = {
+    "μ": common.PriorSpecification(distribution=normal(0, 10)),
+    "α_0": common.PriorSpecification(distribution=half_cauchy(2.5)),
+    "α_1": common.PriorSpecification(distribution=uniform(0, 1)),
+    "β_1_over_1_minus_α_1": common.PriorSpecification(distribution=uniform(0, 1)),
+}
 
-
-def generate_params(u):
-    return {
-        "μ": u[0] * 10,
-        "α_0": normal_to_half_cauchy(u[1]) * 2.5,
-        "α_1": normal_to_uniform(u[2]),
-        "β_1": (1 - normal_to_uniform(u[2])) * normal_to_uniform(u[3]),
-    }
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def generate_from_model(u, data):
-    params = generate_params(u)
+    params = generate_params(u, data)
+    params["β_1"] = params.pop("β_1_over_1_minus_α_1") * (1 - params["α_1"])
 
     def step(x, y):
         x = params["α_0"] + params["α_1"] * (y - params["μ"]) ** 2 + params["β_1"] * x
@@ -51,12 +55,16 @@ def generate_y(u, n, data):
     return y
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    u, n = q[:dim_u], q[dim_u:]
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
-    return (
-        ((data["y_obs"] - params["μ"]) ** 2 / x).sum() / 2
-        + np.log(x).sum() / 2
-        + (u ** 2).sum() / 2
+    return prior_neg_log_dens(u, data) + (
+        ((data["y_obs"] - params["μ"]) ** 2 / x).sum() / 2 + np.log(x).sum() / 2
     )
 
 
@@ -64,7 +72,7 @@ def sample_initial_states(rng, args, data):
     """Sample initial states from prior."""
     init_states = []
     for _ in range(args.num_chain):
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         if args.algorithm == "chmc":
             params, x = generate_from_model(u, data)
             n = (data["y_obs"] - params["μ"]) / onp.sqrt(x)
@@ -92,6 +100,7 @@ if __name__ == "__main__":
     # Load data
 
     data = dict(np.load(os.path.join(args.data_dir, "garch-benchmark-data.npz")))
+    dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
 
@@ -101,8 +110,8 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u)
-        return {**params, "u": u}
+        params, x = generate_from_model(u, data)
+        return {**params, "x": x, "u": u}
 
     # Run experiment
 
@@ -115,6 +124,7 @@ if __name__ == "__main__":
         var_names=["μ", "α_0", "α_1", "β_1"],
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,

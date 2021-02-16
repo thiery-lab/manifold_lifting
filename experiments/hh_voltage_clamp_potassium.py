@@ -1,18 +1,17 @@
-"""Autoregressive moving average (ARMA) benchmark model
+"""Hodgkin-Huxley conductance-based neuronal model under a voltage clamp.
 
-Model definition and data taken from:
-
-https://github.com/stan-dev/stat_comp_benchmarks/tree/master/benchmarks/arma
+Potassium-channel based conductances.
 """
 
 import os
+import pickle
 import numpy as onp
 import jax.config
 import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
-from mlift.distributions import normal, uniform, half_cauchy
+from mlift.distributions import log_normal
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -20,10 +19,13 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "μ": common.PriorSpecification(distribution=normal(0, 10)),
-    "ϕ": common.PriorSpecification(distribution=uniform(-1, 1)),
-    "θ": common.PriorSpecification(distribution=uniform(-1, 1)),
-    "σ": common.PriorSpecification(distribution=half_cauchy(2.5)),
+    "k_alpha_n_1": common.PriorSpecification(distribution=log_normal(-3, 1)),
+    "k_alpha_n_2": common.PriorSpecification(distribution=log_normal(2, 1)),
+    "k_alpha_n_3": common.PriorSpecification(distribution=log_normal(2, 1)),
+    "k_beta_n_1": common.PriorSpecification(distribution=log_normal(-3, 1)),
+    "k_beta_n_2": common.PriorSpecification(distribution=log_normal(2, 1)),
+    "g_bar_K": common.PriorSpecification(distribution=log_normal(2, 1)),
+    "σ": common.PriorSpecification(distribution=log_normal(0, 1)),
 }
 
 (
@@ -34,25 +36,39 @@ prior_specifications = {
 ) = common.set_up_prior(prior_specifications)
 
 
+def alpha_n(v, params):
+    return (
+        params["k_alpha_n_1"]
+        * (v + params["k_alpha_n_2"])
+        / (np.exp((v + params["k_alpha_n_2"]) / params["k_alpha_n_3"]) - 1)
+    )
+
+
+def beta_n(v, params):
+    return params["k_beta_n_1"] * np.exp(v / params["k_beta_n_2"])
+
+
+def solve_for_potassium_conductances(t_seq, v, params):
+    n_0 = alpha_n(0, params) / (alpha_n(0, params) + beta_n(0, params))
+    a_n, b_n = alpha_n(v, params), beta_n(v, params)
+    n_infty, tau_n = a_n / (a_n + b_n), 1 / (a_n + b_n)
+    n_seq = n_0 - (n_0 - n_infty) * (1 - np.exp(-t_seq / tau_n))
+    return params["g_bar_K"] * n_seq ** 4
+
+
 def generate_from_model(u, data):
     params = generate_params(u, data)
-
-    def step(x, y):
-        x = params["μ"] + params["ϕ"] * y + params["θ"] * (y - x)
-        return x, x
-
-    x_0 = params["μ"] * (1 + params["ϕ"])
-    _, x_ = lax.scan(step, x_0, data["y_obs"][:-1])
-
-    x = np.concatenate((np.array([x_0]), x_))
-
+    conductances = [
+        solve_for_potassium_conductances(t_seq, -v, params)
+        for t_seq, v in zip(data["obs_times_g_K"], data["depolarizations"])
+    ]
+    x = np.concatenate(conductances)
     return params, x
 
 
 def generate_y(u, n, data):
     params, x = generate_from_model(u, data)
-    y = x + params["σ"] * n
-    return y
+    return x + params["σ"] * n
 
 
 def extended_prior_neg_log_dens(q, data):
@@ -63,9 +79,9 @@ def extended_prior_neg_log_dens(q, data):
 
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
-    return (
-        prior_neg_log_dens(u, data)
-        + (((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])).sum()
+    return prior_neg_log_dens(u, data) + (
+        np.sum(((x - data["y_obs"]) / params["σ"]) ** 2) / 2
+        + x.shape[0] * np.log(params["σ"])
     )
 
 
@@ -93,15 +109,17 @@ if __name__ == "__main__":
     # Process command line arguments defining experiment parameters
 
     parser = common.set_up_argparser_with_standard_arguments(
-        "Run autoregressive moving average (ARMA) benchmark model experiment"
+        "Run Hodgkin-Huxley model voltage-clamp data experiment (potassium data)"
     )
     args = parser.parse_args()
 
     # Load data
 
-    data = dict(np.load(os.path.join(args.data_dir, "arma-benchmark-data.npz")))
+    with open(os.path.join(args.data_dir, "hodgkin-huxley-data.pkl"), "r+b") as f:
+        data = pickle.load(f)
+
+    data["y_obs"] = np.concatenate(data["obs_vals_g_K"])
     dim_u = compute_dim_u(data)
-    dim_y = data["y_obs"].shape[0]
 
     # Set up seeded random number generator
 
@@ -121,7 +139,7 @@ if __name__ == "__main__":
         data=data,
         dim_u=dim_u,
         rng=rng,
-        experiment_name="arma",
+        experiment_name="hh_voltage_clamp_potassium",
         var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,

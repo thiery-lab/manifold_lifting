@@ -8,23 +8,29 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import jax.scipy.linalg as sla
-from jax.scipy.special import polygamma
 import mlift
+from mlift.distributions import half_normal, inverse_gamma
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-λ_prior_shape, λ_prior_scale = (4, 10)
+prior_specifications = {
+    "α": common.PriorSpecification(distribution=half_normal(3)),
+    "λ": common.PriorSpecification(
+        shape=lambda data: data["x"].shape[1], distribution=inverse_gamma(4, 10)
+    ),
+    "σ": common.PriorSpecification(distribution=half_normal(1)),
+}
 
 
-def generate_params(u):
-    return {
-        "α": np.exp(u[0]) * 3,
-        "λ": np.exp(u[1:-1] * polygamma(1, λ_prior_shape) ** 0.5),
-        "σ": np.exp(u[-1]),
-    }
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def squared_exponential_covariance(x, params):
@@ -36,38 +42,24 @@ def squared_exponential_covariance(x, params):
 
 def covar_func(u, data):
     dim_y = data["y_obs"].shape[0]
-    params = generate_params(u)
+    params = generate_params(u, data)
     return squared_exponential_covariance(data["x"], params) + params[
         "σ"
     ] ** 2 * np.identity(dim_y)
 
 
-def prior_neg_log_dens(u):
-    return (
-        np.exp(2 * u[0]) / 2
-        - u[0]
-        + (
-            λ_prior_shape * polygamma(1, λ_prior_shape) ** 0.5 * u[1:-1]
-            + λ_prior_scale / np.exp(polygamma(1, λ_prior_shape) ** 0.5 * u[1:-1])
-        ).sum()
-        + np.exp(2 * u[-1]) / 2
-        - u[-1]
-    )
-
-
 def extended_prior_neg_log_dens(q, data):
-    dim_u = data["dim_u"]
+    dim_u = compute_dim_u(data)
     u, n = q[:dim_u], q[dim_u:]
-    return (n ** 2).sum() / 2 + prior_neg_log_dens(u)
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
 
 
 def posterior_neg_log_dens(u, data):
     covar = covar_func(u, data)
     chol_covar = np.linalg.cholesky(covar)
-    return (
+    return prior_neg_log_dens(u, data) + (
         data["y_obs"] @ sla.cho_solve((chol_covar, True), data["y_obs"]) / 2
         + np.log(chol_covar.diagonal()).sum()
-        + prior_neg_log_dens(u)
     )
 
 
@@ -75,19 +67,7 @@ def sample_initial_states(rng, args, data):
     """Sample initial states from prior."""
     init_states = []
     for _ in range(args.num_chain):
-        u = onp.concatenate(
-            (
-                onp.log(abs(rng.standard_normal()))[None],
-                -onp.log(
-                    rng.gamma(
-                        shape=λ_prior_shape,
-                        scale=1 / λ_prior_scale,
-                        size=data["x"].shape[1],
-                    )
-                ),
-                onp.log(abs(rng.standard_normal()))[None],
-            )
-        )
+        u = sample_from_prior(rng, data)
         if args.algorithm == "chmc":
             chol_covar = onp.linalg.cholesky(covar_func(u, data))
             n = sla.solve_triangular(chol_covar, data["y_obs"], lower=True)
@@ -130,25 +110,17 @@ if __name__ == "__main__":
     # Load data
 
     data = common.load_regression_data(args, rng)
-    dim_u = data["x"].shape[1] + 2
-    data["dim_u"] = dim_u
+    dim_u = compute_dim_u(data)
     dim_y = data["y_obs"].shape[0]
 
     # Define variables to be traced
 
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u}
 
     # Run experiment
-
-    (
-        neg_log_dens_chmc,
-        grad_neg_log_dens_chmc,
-    ) = mlift.construct_mici_system_neg_log_dens_functions(
-        lambda q: extended_prior_neg_log_dens(q, data)
-    )
 
     final_states, traces, stats, summary_dict, sampler = common.run_experiment(
         args=args,
@@ -156,17 +128,16 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="gp_regression",
-        dir_prefix=f"{args.dataset}_data",
-        var_names=["α", "λ", "σ"],
+        dir_prefix=f"{args.dataset}_data_subsampled_by_{args.data_subsample}",
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.GaussianProcessModelSystem,
         constrained_system_kwargs={
             "covar_func": covar_func,
             "data": data,
             "dim_u": dim_u,
-            "neg_log_dens": neg_log_dens_chmc,
-            "grad_neg_log_dens": grad_neg_log_dens_chmc,
         },
         sample_initial_states=sample_initial_states,
     )

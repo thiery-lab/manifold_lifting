@@ -7,6 +7,7 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
+from mlift.distributions import normal, half_normal, uniform
 from mlift.transforms import normal_to_half_normal, normal_to_uniform
 from experiments import common
 
@@ -14,30 +15,33 @@ jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-dim_u = 3
+prior_specifications = {
+    "μ": common.PriorSpecification(distribution=normal(0, 1)),
+    "σ": common.PriorSpecification(distribution=half_normal(1)),
+    "ϕ": common.PriorSpecification(distribution=uniform(-1, 1)),
+}
+
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
-def generate_params(u):
-    return {
-        "μ": u[0],
-        "σ": normal_to_half_normal(u[1]),
-        "ϕ": normal_to_uniform(u[2]) * 2 - 1,
-    }
-
-
-def generate_x_0(params, v_0):
+def generate_x_0(params, v_0, data):
     return params["μ"] + (params["σ"] / (1 - params["ϕ"] ** 2) ** 0.5) * v_0
 
 
-def forward_func(params, v, x):
+def forward_func(params, v, x, data):
     return params["μ"] + params["ϕ"] * (x - params["μ"]) + params["σ"] * v
 
 
-def observation_func(params, n, x):
+def observation_func(params, n, x, data):
     return np.exp(x / 2) * n
 
 
-def inverse_observation_func(params, n, y):
+def inverse_observation_func(params, n, y, data):
     return 2 * np.log(y / n)
 
 
@@ -49,18 +53,26 @@ generate_from_model, generate_y = mlift.construct_state_space_model_generators(
 )
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    dim_y = data["y_obs"].shape[0]
+    u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
+    return prior_neg_log_dens(u, data) + (v ** 2).sum() / 2 + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
     u, v = q[:dim_u], q[dim_u:]
-    _, x = generate_from_model(u, v)
+    _, x = generate_from_model(u, v, data)
     return (
-        0.5 * ((data["y_obs"] / np.exp(x / 2)) ** 2).sum()
-        + (x / 2).sum()
-        + (q ** 2).sum() / 2
+        prior_neg_log_dens(u, data)
+        + (v ** 2).sum() / 2
+        + (0.5 * ((data["y_obs"] / np.exp(x / 2)) ** 2).sum() + (x / 2).sum())
     )
 
 
-def constr_split(u, v, n, y):
-    params = generate_params(u)
+def constr_split(u, v, n, y, data):
+    params = generate_params(u, data)
     x = 2 * np.log(y / n)
     return (
         np.concatenate(
@@ -80,9 +92,12 @@ def constr_split(u, v, n, y):
     )
 
 
-def jacob_constr_split_blocks(u, v, n, y):
+def jacob_constr_split_blocks(u, v, n, y, data):
+    dim_u = compute_dim_u(data)
     dim_y = y.shape[0]
-    params, dparams_du = api.jvp(generate_params, (u,), (np.ones(dim_u),))
+    params, dparams_du = api.jvp(
+        lambda u_: generate_params(u_, data), (u,), (np.ones(dim_u),)
+    )
     x = 2 * np.log(y / n)
     dx_dy = 2 / y
     one_minus_ϕ_sq = 1 - params["ϕ"] ** 2
@@ -134,10 +149,10 @@ def sample_initial_states(rng, args, data):
     init_states = []
     dim_y = data["y_obs"].shape[0]
     for _ in range(args.num_chain):
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         v = rng.standard_normal(dim_y)
         if args.algorithm == "chmc":
-            _, x = generate_from_model(u, v)
+            _, x = generate_from_model(u, v, data)
             n = data["y_obs"] / onp.exp(x / 2)
             q = onp.concatenate((u, v, onp.asarray(n)))
             assert (
@@ -163,6 +178,7 @@ if __name__ == "__main__":
     # Load data
 
     data = dict(np.load(os.path.join(args.data_dir, "sv-simulated-data.npz")))
+    dim_u = compute_dim_u(data)
     dim_y = data["y_obs"].shape[0]
 
     # Set up seeded random number generator
@@ -173,7 +189,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_y]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u, "v": v}
 
     # Run experiment
@@ -198,9 +214,10 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="sv",
-        var_names=["μ", "σ", "ϕ"],
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=constrained_system_class,
         constrained_system_kwargs=constrained_system_kwargs,
         sample_initial_states=sample_initial_states,

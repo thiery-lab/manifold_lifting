@@ -18,30 +18,34 @@ import jax.lax as lax
 import jax.api as api
 import mlift
 from mlift.transforms import normal_to_half_cauchy
+from mlift.distributions import normal, half_cauchy
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-dim_u = 2
+prior_specifications = {
+    "μ": common.PriorSpecification(distribution=normal(0, 5)),
+    "τ": common.PriorSpecification(distribution=half_cauchy(5)),
+}
+
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
-def generate_params(u):
-    return {
-        "μ": u[0] * 5,
-        "τ": normal_to_half_cauchy(u[1]) * 5,
-    }
-
-
-def generate_x(u, v):
-    params = generate_params(u)
+def generate_x(u, v, data):
+    params = generate_params(u, data)
     x = params["μ"] + params["τ"] * v
     return params, x
 
 
 def generate_from_model(u, v, n, data):
-    params, x = generate_x(u, v)
+    params, x = generate_x(u, v, data)
     y = x + data["σ"] * n
     return params, x, y
 
@@ -51,12 +55,22 @@ def generate_y(u, v, n, data):
     return y
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    dim_y = data["y_obs"].shape[0]
+    u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
+    return prior_neg_log_dens(u, data) + (v ** 2).sum() / 2 + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
     u, v = q[:dim_u], q[dim_u:]
-    _, x = generate_x(u, v)
-    return (((data["y_obs"] - x) / data["σ"]) ** 2 / 2 + np.log(data["σ"])).sum() + (
-        q ** 2
-    ).sum() / 2
+    _, x = generate_x(u, v, data)
+    return (
+        prior_neg_log_dens(u, data)
+        + (v ** 2).sum() / 2
+        + (((data["y_obs"] - x) / data["σ"]) ** 2 / 2 + np.log(data["σ"])).sum()
+    )
 
 
 def sample_initial_states(rng, args, data):
@@ -64,10 +78,10 @@ def sample_initial_states(rng, args, data):
     init_states = []
     dim_y = data["y_obs"].shape[0]
     for _ in range(args.num_chain):
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         v = rng.standard_normal(dim_y)
         if args.algorithm == "chmc":
-            _, x = generate_x(u, v)
+            _, x = generate_x(u, v, data)
             n = (data["y_obs"] - x) / data["σ"]
             q = onp.concatenate((u, v, onp.asarray(n)))
             assert (
@@ -92,6 +106,7 @@ if __name__ == "__main__":
     # Load data
 
     data = dict(np.load(os.path.join(args.data_dir, "eight-schools-data.npz")))
+    dim_u = compute_dim_u(data)
     dim_y = data["y_obs"].shape[0]
 
     # Set up seeded random number generator
@@ -102,7 +117,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_y]
-        params, x = generate_x(u, v)
+        params, x = generate_x(u, v, data)
         return {**params, "x": x, "u": u, "v": v}
 
     # Run experiment
@@ -113,9 +128,10 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="eight_schools",
-        var_names=["μ", "τ", "x"],
+        var_names=list(prior_specifications.keys()) + ["x"],
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.HierarchicalLatentVariableModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,

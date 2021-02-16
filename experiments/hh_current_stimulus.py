@@ -7,10 +7,29 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
+from mlift.distributions import normal, log_normal
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
+
+
+prior_specifications = {
+    "k_tau_p_1": common.PriorSpecification(distribution=log_normal(8, 1)),
+    "g_bar_Na": common.PriorSpecification(distribution=log_normal(4, 1)),
+    "g_bar_K": common.PriorSpecification(distribution=log_normal(2, 1)),
+    "g_bar_M": common.PriorSpecification(distribution=log_normal(-3, 1)),
+    "g_leak": common.PriorSpecification(distribution=log_normal(-3, 1)),
+    "v_t": common.PriorSpecification(distribution=normal(-60, 10)),
+    "σ": common.PriorSpecification(distribution=log_normal(1, 1)),
+}
+
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def x_over_expm1_x(x):
@@ -103,31 +122,6 @@ def i_stimulus(t, params_and_data):
     )
 
 
-params_prior_mean_std_exp_transform = {
-    "k_tau_p_1": (8.0, 1.0, True),
-    "g_bar_Na": (4.0, 1.0, True),
-    "g_bar_K": (2.0, 1.0, True),
-    "g_bar_M": (-3.0, 1.0, True),
-    "g_leak": (-3.0, 1.0, True),
-    "v_t": (-60.0, 10.0, False),
-    "σ": (1.0, 1.0, True),
-}
-
-dim_u = len(params_prior_mean_std_exp_transform)
-
-
-def generate_params(u, data):
-    params = {}
-    for i, (name, (mean, std, exp_transform)) in enumerate(
-        params_prior_mean_std_exp_transform.items()
-    ):
-        if exp_transform:
-            params[name] = np.exp(mean + u[i] * std)
-        else:
-            params[name] = mean + u[i] * std
-    return params
-
-
 def generate_x_init(params_and_data):
     # Initialise at steady-state values
     v = params_and_data["E_leak"]
@@ -204,6 +198,12 @@ def generate_y(u, n, data):
     return x + params["σ"] * n
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    u, n = q[:dim_u], q[dim_u:]
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(u, data):
     params, y = generate_from_model(u, data)
     return (
@@ -234,7 +234,7 @@ def sample_initial_states(rng, args, data):
     num_tries = 0
     jitted_generate_from_model = api.jit(lambda u: generate_from_model(u, data))
     while len(init_states) < args.num_chain and num_tries < args.max_init_tries:
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         params, x = jitted_generate_from_model(u)
         spike_times = calculate_spike_times(x, data)
         if (
@@ -283,7 +283,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--init-spike-time-diff-threshold",
         type=float,
-        default=1.,
+        default=1.0,
         help="Maximum difference between spike times of initial state and observations",
     )
     args = parser.parse_args()
@@ -296,6 +296,7 @@ if __name__ == "__main__":
         )
     )
     data["y_obs"] = data["x_obs"] + args.obs_noise_std * data["n_obs"]
+    dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
 
@@ -317,9 +318,10 @@ if __name__ == "__main__":
         rng=rng,
         experiment_name="hh_current_stimulus",
         dir_prefix=f"σ_{args.obs_noise_std:.0e}",
-        var_names=list(params_prior_mean_std_exp_transform.keys()),
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,

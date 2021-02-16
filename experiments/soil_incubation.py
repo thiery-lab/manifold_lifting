@@ -11,11 +11,7 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
-from mlift.transforms import (
-    normal_to_half_cauchy,
-    normal_to_half_normal,
-    normal_to_uniform,
-)
+from mlift.distributions import half_normal, half_cauchy, beta
 from mlift.ode import integrate_ode_rk4
 from experiments import common
 
@@ -23,22 +19,21 @@ jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-def normal_to_beta_10_1(n):
-    return normal_to_uniform(n) ** 0.1
-
-
-param_prior_specifications = {
-    "k_1": common.PriorSpecification(shape=(), transform=normal_to_half_normal),
-    "k_2": common.PriorSpecification(shape=(), transform=normal_to_half_normal),
-    "α_21": common.PriorSpecification(shape=(), transform=normal_to_half_normal),
-    "α_12": common.PriorSpecification(shape=(), transform=normal_to_half_normal),
-    "γ": common.PriorSpecification(shape=(), transform=normal_to_beta_10_1),
-    "σ": common.PriorSpecification(shape=(), transform=normal_to_half_cauchy),
+prior_specifications = {
+    "k_1": common.PriorSpecification(distribution=half_normal(1)),
+    "k_2": common.PriorSpecification(distribution=half_normal(1)),
+    "α_21": common.PriorSpecification(distribution=half_normal(1)),
+    "α_12": common.PriorSpecification(distribution=half_normal(1)),
+    "γ": common.PriorSpecification(distribution=beta(10, 1)),
+    "σ": common.PriorSpecification(distribution=half_cauchy(1)),
 }
 
-generate_params, dim_u = common.get_param_generator_and_dimension(
-    param_prior_specifications
-)
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def dx_dt(x, t, params):
@@ -55,15 +50,15 @@ def observation_func(x, data):
 
 
 def generate_from_model(u, data):
-    params = generate_params(u)
+    params = generate_params(u, data)
     x_init = np.array(
         (
             params["γ"] * data["initial_total_carbon"],
             (1 - params["γ"]) * data["initial_total_carbon"],
         )
     )
-    x_seq = integrate_ode_rk4(dx_dt, x_init, data["t_seq"], params, data["dt"])
-    return params, x_seq
+    x = integrate_ode_rk4(dx_dt, x_init, data["t_seq"], params, data["dt"])
+    return params, x
 
 
 def generate_y(u, n, data):
@@ -71,19 +66,28 @@ def generate_y(u, n, data):
     return observation_func(x, data) + params["σ"] * n
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    u, n = q[:dim_u], q[dim_u:]
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
     y_mean = observation_func(x, data)
     return (
-        ((y_mean - data["y_obs"]) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
-    ).sum() + np.sum(u ** 2) / 2
+        prior_neg_log_dens(u, data)
+        + (
+            ((y_mean - data["y_obs"]) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
+        ).sum()
+    )
 
 
 def sample_initial_states(rng, args, data):
     """Sample initial states from prior."""
     init_states = []
     while len(init_states) < args.num_chain:
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         params, x = generate_from_model(u, data)
         y_mean = observation_func(x, data)
         if not onp.all(np.isfinite(y_mean)):
@@ -113,6 +117,7 @@ if __name__ == "__main__":
     # Load data
 
     data = dict(onp.load(os.path.join(args.data_dir, "soil-incubation-data.npz")))
+    dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
 
@@ -122,7 +127,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u}
 
     # Run experiment
@@ -133,9 +138,10 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="soil_incubation",
-        var_names=list(param_prior_specifications.keys()),
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,

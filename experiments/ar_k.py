@@ -12,23 +12,31 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
-from mlift.transforms import normal_to_half_cauchy, normal_to_uniform
+from mlift.distributions import normal, uniform, half_cauchy
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
 
-def generate_params(u):
-    return {
-        "α": u[0] * 10,
-        "β": u[1:-1] * 10,
-        "σ": normal_to_half_cauchy(u[-1]) * 2.5,
-    }
+prior_specifications = {
+    "α": common.PriorSpecification(distribution=normal(0, 10)),
+    "β": common.PriorSpecification(
+        shape=lambda data: data["max_lag"], distribution=normal(0, 10)
+    ),
+    "σ": common.PriorSpecification(distribution=half_cauchy(2.5)),
+}
+
+(
+    compute_dim_u,
+    generate_params,
+    prior_neg_log_dens,
+    sample_from_prior,
+) = common.set_up_prior(prior_specifications)
 
 
 def generate_from_model(u, data):
-    params = generate_params(u)
+    params = generate_params(u, data)
     x = params["α"] + (data["y_windows"] * params["β"]).sum(-1)
     return params, x
 
@@ -39,18 +47,24 @@ def generate_y(u, n, data):
     return y
 
 
+def extended_prior_neg_log_dens(q, data):
+    dim_u = compute_dim_u(data)
+    u, n = q[:dim_u], q[dim_u:]
+    return prior_neg_log_dens(u, data) + (n ** 2).sum() / 2
+
+
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
-    return (
+    return prior_neg_log_dens(u, data) + (
         ((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
-    ).sum() + (u ** 2).sum() / 2
+    ).sum()
 
 
 def sample_initial_states(rng, args, data):
     """Sample initial states from prior."""
     init_states = []
     for _ in range(args.num_chain):
-        u = rng.standard_normal(dim_u)
+        u = sample_from_prior(rng, data)
         if args.algorithm == "chmc":
             params, x = generate_from_model(u, data)
             n = (data["y_obs"] - x) / params["σ"]
@@ -77,7 +91,7 @@ if __name__ == "__main__":
     # Load data
 
     data = dict(np.load(os.path.join(args.data_dir, "ar-k-benchmark-data.npz")))
-    dim_u = data["max_lag"] + 2
+    dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
 
@@ -87,7 +101,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u)
+        params = generate_params(u, data)
         return {**params, "u": u}
 
     # Run experiment
@@ -98,9 +112,10 @@ if __name__ == "__main__":
         dim_u=dim_u,
         rng=rng,
         experiment_name="garch",
-        var_names=["α", "β", "σ"],
+        var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
+        extended_prior_neg_log_dens=extended_prior_neg_log_dens,
         constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,
