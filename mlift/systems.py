@@ -860,7 +860,7 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
 
         y = (
             cholesky(covar_func(u, data)) @ v +
-            noise_scale_func(u) * noise_transform_func(n)
+            noise_scale_func(u, data) * noise_transform_func(n)
         )
 
     where `y` is a `(dim_y,)` shaped 1D array of observed variables, `u` is a `(dim_u,)`
@@ -873,9 +873,10 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
     length `dim_u` 1D array of latent variables and a data dictionary, and outputs a
     `(dim_y, dim_y)` 2D array corresponding to a positive-definite matrix,
     `noise_scale_func` is a differentiable positive-valued function which takes a
-    `(dim_u,)` shaped array as input and outputs a scalar, and `noise_transform_func` is
-    a differentiable function which takes a `(dim_y,)` shaped array as input, outputs a
-    `(dim_y,)` shaped array and acts elementwise such that it has a diagonal Jacobian.
+    `(dim_u,)` shaped array and data dictionary as input and outputs a scalar, and
+    `noise_transform_func` is a differentiable function which takes a `(dim_y,)` shaped
+    array as input, outputs a `(dim_y,)` shaped array and acts elementwise such that it
+    has a diagonal Jacobian.
     """
 
     def __init__(
@@ -894,9 +895,9 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
                 length `dim_u` 1D array of latent variables and a data dictionary, and
                 outputs a `(dim_y, dim_y)` 2D array corresponding to a positive-definite
                 matrix.
-            noise_scale_func (callable): Differentiable function which takes a single
-                argument, a length `dim_u` 1D array of latent variables and outputs
-                a positive scalar.
+            noise_scale_func (callable): Differentiable function which takes two
+                arguments, a length `dim_u` 1D array of latent variables and a data
+                dictionary and outputs a positive scalar.
             noise_transform_func (callable): Differentiable function which takes a
                 single argument, a length `dim_y` 1D array and outputs a `(dim_y,)` 1D
                 array, with the function acting elementwise such that it has a diagonal
@@ -925,7 +926,7 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
 
         def generate_y(u, v, n):
             covar = covar_func(u, data)
-            return cholesky(covar) @ v + noise_scale_func(u) * noise_transform_func(n)
+            return cholesky(covar) @ v + noise_scale_func(u, data) * t
 
         def constr(q):
             u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
@@ -938,7 +939,7 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
                 out_axes=(None, 1),
             )((np.identity(dim_u),))
             chol_covar = cholesky(covar)
-            s, ds_du = api.value_and_grad(noise_scale_func)(u)
+            s, ds_du = api.value_and_grad(noise_scale_func)(u, data)
             t, dt_dn = api.jvp(noise_transform_func, (n,), (np.ones(dim_y),))
             dy_du = ds_du[None, :] * t[:, None] + api.vmap(
                 jvp_cholesky_mtx_mult_by_vct, (1, None, None), 1
