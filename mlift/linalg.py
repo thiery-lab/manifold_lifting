@@ -2,6 +2,7 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 from jax.lax.linalg import triangular_solve, cholesky
+from mlift.math import log_diff_exp
 
 
 def lu_triangular_solve(l, u, b):
@@ -84,21 +85,6 @@ def tridiagonal_solve(a, b, c, d):
     _, x = lax.scan(backward, d[-1] / b[-1], (b[:-1], c, d[:-1]), reverse=True)
 
     return np.concatenate((x, d[-1:] / b[-1:]))
-
-
-def log1m_exp(val):
-    """Numerically stable implementation of `log(1 - exp(val))`."""
-    return lax.cond(
-        lax.gt(val, lax.log(2.0)),
-        lambda _: lax.log(-lax.expm1(val)),
-        lambda _: lax.log1p(-lax.exp(val)),
-        operand=None,
-    )
-
-
-def log_diff_exp(val1, val2):
-    """Numerically stable implementation of `log(exp(val1) - exp(val2))`."""
-    return val1 + log1m_exp(val2 - val1)
 
 
 def tridiagonal_pos_def_log_det(a, b):
