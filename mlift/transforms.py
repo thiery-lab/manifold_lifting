@@ -1,98 +1,216 @@
+import numpy as onp
 import jax.numpy as np
-from jax.scipy.special import ndtr, ndtri
+import jax.api as api
+from jax.scipy.special import ndtr, ndtri, logit, expit
+from mlift.math import (
+    standard_cauchy_cdf,
+    standard_cauchy_icdf,
+    standard_students_t_2_cdf,
+    standard_students_t_2_icdf,
+    standard_students_t_4_cdf,
+    standard_students_t_4_icdf,
+)
+from mlift.distributions import RealInterval, reals, nonnegative_reals
 
 
-def normal_to_uniform(n):
-    """Transform standard normal variate to standard uniform variate."""
-    return ndtr(n)
+class ElementwiseMonotonicTransform:
+    def __init__(self, forward, backward, domain, image, val_and_grad_forward=None):
+        self._forward = forward
+        self._backward = backward
+        self.domain = domain
+        self.image = image
+        if val_and_grad_forward is None:
+            val_and_grad_forward = api.value_and_grad(forward)
+        self._val_and_grad_forward = val_and_grad_forward
+
+    def forward(self, u):
+        return self._forward(u)
+
+    def backward(self, x):
+        return self._backward(x)
+
+    def forward_and_det_jacobian(self, u):
+        if onp.isscalar(u) or u.shape == ():
+            return self._val_and_grad_forward(u)
+        else:
+            x, dx_du = api.vmap(self._val_and_grad_forward)(u)
+            return x, dx_du.sum()
+
+    def __call__(self, u):
+        return self._forward(u)
 
 
-def uniform_to_normal(u):
-    """Transform standard uniform variate to standard normal variate."""
-    return ndtri(u)
+def unbounded_to_lower_bounded(lower):
+    """Construct transform from reals to lower-bounded interval.
 
+    Args:
+        lower (float): Lower-bound of image of transform.
+    """
 
-def students_t_4_to_uniform(t):
-    """Transform standard Student's t variate with ν = 4 to standard uniform variate."""
-    t_sq = t ** 2
-    return 0.5 + (3 / 8) * (t / np.sqrt(1 + t_sq / 4)) * (
-        1 - (t_sq / (1 + t_sq / 4)) / 12
+    return ElementwiseMonotonicTransform(
+        forward=lambda u: np.exp(u) + lower,
+        backward=lambda x: np.log(x - lower),
+        domain=reals,
+        image=RealInterval(lower, onp.inf),
     )
 
 
-def uniform_to_students_t_4(u):
-    """Transform standard uniform variate to standard Student's t variate with ν = 4."""
-    sqrt_α = np.sqrt(4 * u * (1 - u))
-    return 2 * np.sign(u - 0.5) * np.sqrt(np.cos(np.arccos(sqrt_α) / 3) / sqrt_α - 1)
+def unbounded_to_upper_bounded(upper):
+    """Construct transform from reals to upper-bounded interval.
+
+    Args:
+        upper (float): Upper-bound of image of transform.
+    """
+    return ElementwiseMonotonicTransform(
+        forward=lambda u: upper - np.exp(u),
+        backward=lambda x: np.log(upper - x),
+        domain=reals,
+        image=RealInterval(-onp.inf, upper),
+    )
 
 
-def students_t_2_to_uniform(t):
-    """Transform standard Student's t variate with ν = 2 to standard uniform variate."""
-    return 0.5 + t / (2 * np.sqrt(2 + t**2))
+def unbounded_to_lower_and_upper_bounded(lower, upper):
+    """Construct transform from reals to bounded interval.
+
+    Args:
+        lower (float): Lower-bound of image of transform.
+        upper (float): Upper-bound of image of transform.
+    """
+    return ElementwiseMonotonicTransform(
+        forward=lambda u: lower + (upper - lower) * expit(np.asarray(u, np.float64)),
+        backward=lambda x: logit((np.asarray(x, np.float64) - lower) / (upper - lower)),
+        domain=reals,
+        image=RealInterval(lower, upper),
+    )
 
 
-def uniform_to_students_t_2(u):
-    """Transform standard uniform variate to standard Student's t variate with ν = 2."""
-    sqrt_α = np.sqrt(4 * u * (1 - u))
-    return 2 * (u - 0.5) * np.sqrt(2 / sqrt_α)
+def diagonal_affine_map(location, scale):
+
+    return ElementwiseMonotonicTransform(
+        forward=lambda x: location + scale * x,
+        backward=lambda y: (y - location) / scale,
+        domain=reals,
+        image=reals,
+        val_and_grad_forward=lambda x: (location + scale * x, scale),
+    )
 
 
-def cauchy_to_uniform(c):
-    """Transform standard Cauchy variate to standard uniform variate."""
-    return np.arctan(c) / np.pi + 0.5
+def standard_normal_to_uniform(lower, upper):
+
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: lower + ndtr(n) * (upper - lower),
+        backward=lambda u: ndtri(u - lower / (upper - lower)),
+        domain=reals,
+        image=RealInterval(lower, upper),
+    )
 
 
-def uniform_to_cauchy(u):
-    """Transform standard uniform variate to standard normal variate."""
-    return np.tan(np.pi * (u - 0.5))
+def standard_normal_to_exponential(rate):
+
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: -np.log(ndtr(n)) / rate,
+        backward=lambda e: ndtri(np.exp(-e * rate)),
+        domain=reals,
+        image=nonnegative_reals,
+    )
 
 
-def normal_to_students_t_4(n):
-    """Transform standard normal variate to standard Student's t variate with ν = 4."""
-    return uniform_to_students_t_4(normal_to_uniform(n))
+def standard_normal_to_cauchy(location, scale):
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: location + standard_cauchy_icdf(ndtr(n)) * scale,
+        backward=lambda c: ndtri(standard_cauchy_cdf((c - location) / scale)),
+        domain=reals,
+        image=reals,
+    )
 
 
-def normal_to_students_t_2(n):
-    """Transform standard normal variate to standard Student's t variate with ν = 2."""
-    return uniform_to_students_t_2(normal_to_uniform(n))
+def standard_normal_to_half_normal(scale):
+
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: ndtri((ndtr(n) + 1) / 2) * scale,
+        backward=lambda h: ndtri(2 * ndtr(h / scale) - 1),
+        domain=reals,
+        image=nonnegative_reals,
+    )
 
 
-def normal_to_cauchy(n):
-    """Transform standard normal variate to standard Cauchy variate."""
-    return uniform_to_cauchy(normal_to_uniform(n))
+def standard_normal_to_half_cauchy(scale):
+
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: standard_cauchy_icdf((ndtr(n) + 1) / 2) * scale,
+        backward=lambda h: ndtri(2 * standard_cauchy_cdf(h / scale) - 1),
+        domain=reals,
+        image=nonnegative_reals,
+    )
 
 
-def normal_to_half_cauchy(n):
-    """Transform standard normal variate to half-Cauchy variate."""
-    return uniform_to_cauchy((normal_to_uniform(n) + 1) / 2)
+def standard_normal_to_truncated_normal(location, scale, lower, upper):
+
+    a = ndtr((lower - location) / scale)
+    b = ndtr((upper - location) / scale)
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: ndtri(a + ndtr(n) * (b - a)) * scale + location,
+        backward=lambda t: ndtri((ndtr((t - location) / scale) - a) / (b - a)),
+        domain=reals,
+        image=RealInterval(lower, upper),
+    )
 
 
-def normal_to_half_normal(n):
-    """Transform standard normal variate to half-normal variate."""
-    return uniform_to_normal((normal_to_uniform(n) + 1) / 2)
+def standard_normal_to_beta(shape_a, shape_b):
+
+    if shape_b == 1:
+
+        def icdf(u):
+            return u ** (1 / shape_a)
+
+        def cdf(x):
+            return x ** shape_a
+
+    elif shape_a == 1:
+
+        def icdf(u):
+            return 1 - (1 - u) ** (1 / shape_b)
+
+        def cdf(x):
+            return 1 - (1 - x) ** shape_b
+
+    else:
+
+        raise ValueError("Transform only defined for shape_a == 1 or shape_b == 1")
+
+    return ElementwiseMonotonicTransform(
+        forward=lambda n: icdf(ndtr(n)),
+        backward=lambda x: ndtri(cdf(x)),
+        domain=reals,
+        image=RealInterval(0, 1),
+    )
 
 
-def students_t_4_to_normal(t):
-    """Transform standard normal variate to standard Student's t variate with ν = 4."""
-    return uniform_to_normal(students_t_4_to_uniform(t))
+def standard_normal_to_students_t(location, scale, dof):
 
+    if dof == 1:
 
-def students_t_2_to_normal(t):
-    """Transform standard normal variate to standard Student's t variate with ν = 2."""
-    return uniform_to_normal(students_t_2_to_uniform(t))
+        return standard_normal_to_cauchy(location, scale)
 
+    elif dof == 2:
 
-def cauchy_to_normal(c):
-    """Transform standard Cauchy variate to standard normal variate."""
-    return uniform_to_normal(cauchy_to_uniform(c))
+        return ElementwiseMonotonicTransform(
+            forward=lambda n: location + standard_students_t_2_icdf(ndtr(n)) * scale,
+            backward=lambda t: ndtri((standard_students_t_2_cdf(t - location) / scale)),
+            domain=reals,
+            image=reals,
+        )
 
+    elif dof == 4:
 
-def half_cauchy_to_normal(h):
-    """Transform half-Cauchy variate to standard normal variate."""
-    return uniform_to_normal(2 * cauchy_to_uniform(h) - 1)
+        return ElementwiseMonotonicTransform(
+            forward=lambda n: location + standard_students_t_4_icdf(ndtr(n)) * scale,
+            backward=lambda t: ndtri((standard_students_t_4_cdf(t - location) / scale)),
+            domain=reals,
+            image=reals,
+        )
 
+    else:
 
-def half_normal_to_normal(h):
-    """Transform half-normal variate to standard normal variate."""
-    return uniform_to_normal(2 * normal_to_uniform(h) - 1)
+        raise ValueError("Transform only defined for dof in {1, 2, 4}")
 
