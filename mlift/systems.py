@@ -93,50 +93,53 @@ def construct_state_space_model_generators(
     """Construct functions to generate obs. and state sequences for state space models.
 
     Args:
-        generate_params (Callable[[ArrayLike], Dict]): Function which generates a
+        generate_params (Callable[[ArrayLike, Dict], Dict]): Function which generates a
             dictionary of model parameters given a 1D array of unbounded global latent
-            variables.
-        generate_x_0 (Callable[[Dict, ArrayLike], ArrayLike]): Function which generates
-            the initial latent state given a dictionary of model parameters and an
-            array of unbounded local latent variables.
-        forward_func (Callable[[Dict, ArrayLike, ArrayLike], ArrayLike]): Function which
-            generates the next state in the latent state sequence, given a dictionary of
-            model parameters, an array of unbounded local latent variables and the
-            current latent state.
-        observation_func (Callable[[Dict, ArrayLike, ArrayLike], ArrayLike]): Function
-            which generates the observation of a latent state, given a dictionary of
-            model parameters, an array of unbounded local latent (observation noise)
-            variables and the current latent state.
+            variables and data dictionary.
+        generate_x_0 (Callable[[Dict, ArrayLike, Dict], ArrayLike]): Function which
+            generates the initial latent state given a dictionary of model parameters,
+            an array of unbounded local latent variables and a data dictionary.
+        forward_func (Callable[[Dict, ArrayLike, ArrayLike, Dict], ArrayLike]): Function
+            which generates the next state in the latent state sequence, given a
+            dictionary of model parameters, an array of unbounded local latent
+            variables, the current latent state and a data dictionary.
+        observation_func (Callable[[Dict, ArrayLike, ArrayLike, Dict], ArrayLike]):
+            Function which generates the observation of a latent state, given a
+            dictionary of model parameters, an array of unbounded local latent
+            (observation noise) variables, the current latent state and a data
+            dictionary.
 
     Returns:
         generate_from_model (
-                Callable[[ArrayLike, ArrayLike], Tuple[Dict, ArrayLike]]):
-            Function which given two arrays, the first corresponding to all unbounded
-            global latent variables and the second corresponding to all unbounded local
-            latent variables, returns a dictionary of model parameters and an array
-            corresponding to the generated latent state sequence.
+                Callable[[ArrayLike, ArrayLike, Dict], Tuple[Dict, ArrayLike]]):
+            Function which given two array arguments and a data dictionary, the first
+            array corresponding to all unbounded global latent variables and the second
+            corresponding to all unbounded local latent variables, returns a dictionary
+            of model parameters and an array corresponding to the generated latent state
+            sequence.
         generate_y (
-                Callable[[ArrayLike, ArrayLike, ArrayLike], ArrayLike]):
-            Function which given three arrays, the first corresponding to all unbounded
-            global latent variables, the second corresponding to all unbounded local
-            latent variables and the third corresponding to all unbounded observation
-            noise variables, returns an array corresponding to all observed variables.
+                Callable[[ArrayLike, ArrayLike, ArrayLike, Dict], ArrayLike]):
+            Function which given three arrays and a data dictionary, the first array
+            corresponding to all unbounded global latent variables, the second
+            corresponding to all unbounded local latent variables and the third
+            corresponding to all unbounded observation noise variables, returns an array
+            corresponding to all observed variables.
     """
 
-    def generate_from_model(u, v):
-        params = generate_params(u)
-        x_0 = generate_x_0(params, v[0])
+    def generate_from_model(u, v, data):
+        params = generate_params(u, data)
+        x_0 = generate_x_0(params, v[0], data)
 
         def step(x, v):
-            x_ = forward_func(params, v, x)
+            x_ = forward_func(params, v, x, data)
             return x_, x_
 
         _, x_ = lax.scan(step, x_0, v[1:])
         return params, np.concatenate((x_0[None], x_))
 
-    def generate_y(u, v, n):
-        params, x = generate_from_model(u, v)
-        y = api.vmap(observation_func, (None, 0, 0))(params, n, x)
+    def generate_y(u, v, n, data):
+        params, x = generate_from_model(u, v, data)
+        y = api.vmap(observation_func, (None, 0, 0))(params, n, x, data)
         return y
 
     return generate_from_model, generate_y
@@ -1002,29 +1005,38 @@ class PartiallyInvertibleStateSpaceModelSystem(
 
     Generative model is assumed to be of the form
 
-        x[0] = generate_x_0(u, v[0])
+        params = generate_params(u, data)
+        x[0] = generate_x_0(params, v[0], data)
         for t in range(dim_y):
-            x[t] = forward_func(u, v[t], x[t - 1])
-            y[t] = observation_func(u, n[t], x[t])
+            x[t] = forward_func(params, v[t], x[t - 1], data)
+            y[t] = observation_func(params, n[t], x[t], data)
 
     If `inverse_observation_func` corresponds to the inverse of `observation_func` in
-    its final argument,
+    its third argument,
 
-        observation_func(u, n, inverse_observation_func(u, n, y)) == y
+        observation_func(
+            params, n, inverse_observation_func(params, n, y, data), data) == y
 
     then we can define a 'split' constraint function for the generative model as follows
 
-        def constr_split(u, v, n, y):
-            x = [inverse_observation_func(u, n[t], y[t]) for t in range(1, dim_y)]
+        def constr_split(u, v, n, y, data):
+            params = generate_params(u, data)
+            x = [
+                inverse_observation_func(params, n[t], y[t], data)
+                for t in range(1, dim_y)
+            ]
             return array(
-                [generate_x_0(u, v[0]) - x[0]] +
-                [forward_func(u, v[t], x[t-1]) - x[t] for t in range(1, dim_y)]
+                [generate_x_0(params, v[0], data) - x[0]] +
+                [
+                    forward_func(params, v[t], x[t-1], data) - x[t]
+                    for t in range(1, dim_y)
+                ]
             ), x
 
     where `y` is a `(dim_y,)` shaped 1D array of observed variables, `u` is a `(dim_u,)`
     shaped 1D array of global latent variables, `v` is a `(dim_y,)` shaped 1D array of
-    local latent variables and `n` is a `(dim_y,)` shaped 1D array of observation noise
-    variables.
+    local latent variables, `n` is a `(dim_y,)` shaped 1D array of observation noise
+    variables and `data` is a dictionary of fixed values / data used by model.
     """
 
     def __init__(
@@ -1040,21 +1052,21 @@ class PartiallyInvertibleStateSpaceModelSystem(
 
         if jacob_constr_split_blocks is None:
 
-            def jacob_constr_split_blocks(u, v, n, y):
-                dc_du = api.jacfwd(lambda u_: constr_split(u_, v, n, y)[0])(u)
+            def jacob_constr_split_blocks(u, v, n, y, data):
+                dc_du = api.jacfwd(lambda u_: constr_split(u_, v, n, y, data)[0])(u)
                 one_vct = np.ones(dim_y)
                 alt_vct = (-1.0) ** np.arange(dim_y)
                 _, dx_dy = api.jvp(
-                    lambda y_: constr_split(u, v, n, y_)[1], (y,), (one_vct,)
+                    lambda y_: constr_split(u, v, n, y_, data)[1], (y,), (one_vct,)
                 )
                 c, dc_dv = api.jvp(
-                    lambda v_: constr_split(u, v_, n, y)[0], (v,), (one_vct,)
+                    lambda v_: constr_split(u, v_, n, y, data)[0], (v,), (one_vct,)
                 )
                 _, dc_dn_1 = api.jvp(
-                    lambda n_: constr_split(u, v, n_, y)[0], (n,), (one_vct,)
+                    lambda n_: constr_split(u, v, n_, y, data)[0], (n,), (one_vct,)
                 )
                 _, dc_dn_a = api.jvp(
-                    lambda n_: constr_split(u, v, n_, y)[0], (n,), (alt_vct,)
+                    lambda n_: constr_split(u, v, n_, y, data)[0], (n,), (alt_vct,)
                 )
                 dc_dn = (
                     (dc_dn_1 + dc_dn_a * alt_vct) / 2,
@@ -1064,11 +1076,11 @@ class PartiallyInvertibleStateSpaceModelSystem(
 
         def constr(q):
             u, v, n = np.split(q, (dim_u, dim_u + dim_y))
-            return constr_split(u, v, n, data["y_obs"])[0]
+            return constr_split(u, v, n, data["y_obs"], data)[0]
 
         def jacob_constr_blocks(q):
             u, v, n = np.split(q, (dim_u, dim_u + dim_y))
-            return jacob_constr_split_blocks(u, v, n, data["y_obs"])
+            return jacob_constr_split_blocks(u, v, n, data["y_obs"], data)
 
         def lmult_by_jacob_constr(dc_du, dc_dv, dc_dn, dx_dy, vct):
             vct_u, vct_v, vct_n = (
@@ -1166,29 +1178,38 @@ class AutoPartiallyInvertibleStateSpaceModelSystem(
 
     Generative model is assumed to be of the form
 
-        x[0] = generate_x_0(u, v[0])
+        params = generate_params(u, data)
+        x[0] = generate_x_0(params, v[0], data)
         for t in range(dim_y):
-            x[t] = forward_func(u, v[t], x[t - 1])
-            y[t] = observation_func(u, n[t], x[t])
+            x[t] = forward_func(params, v[t], x[t - 1], data)
+            y[t] = observation_func(params, n[t], x[t], data)
 
     If `inverse_observation_func` corresponds to the inverse of `observation_func` in
-    its final argument,
+    its third argument,
 
-        observation_func(u, n, inverse_observation_func(u, n, y)) == y
+        observation_func(
+            params, n, inverse_observation_func(params, n, y, data), data) == y
 
     then we can define a 'split' constraint function for the generative model as follows
 
-        def constr_split(u, v, n, y):
-            x = [inverse_observation_func(u, n[t], y[t]) for t in range(1, dim_y)]
+        def constr_split(u, v, n, y, data):
+            params = generate_params(u, data)
+            x = [
+                inverse_observation_func(params, n[t], y[t], data)
+                for t in range(1, dim_y)
+            ]
             return array(
-                [generate_x_0(u, v[0]) - x[0]] +
-                [forward_func(u, v[t], x[t-1]) - x[t] for t in range(1, dim_y)]
+                [generate_x_0(params, v[0], data) - x[0]] +
+                [
+                    forward_func(params, v[t], x[t-1], data) - x[t]
+                    for t in range(1, dim_y)
+                ]
             ), x
 
     where `y` is a `(dim_y,)` shaped 1D array of observed variables, `u` is a `(dim_u,)`
     shaped 1D array of global latent variables, `v` is a `(dim_y,)` shaped 1D array of
-    local latent variables and `n` is a `(dim_y,)` shaped 1D array of observation noise
-    variables.
+    local latent variables, `n` is a `(dim_y,)` shaped 1D array of observation noise
+    variables and `data` is a dictionary of fixed values / data used by model.
 
     Compared to the `PartiallyInvertibleStateSpaceModelSystem` class this class
     automatically constructs the required 'split' constraint function (and function to
@@ -1200,6 +1221,7 @@ class AutoPartiallyInvertibleStateSpaceModelSystem(
 
     def __init__(
         self,
+        generate_params,
         generate_x_0,
         forward_func,
         inverse_observation_func,
@@ -1208,25 +1230,34 @@ class AutoPartiallyInvertibleStateSpaceModelSystem(
         neg_log_dens=standard_normal_neg_log_dens,
         grad_neg_log_dens=standard_normal_grad_neg_log_dens,
     ):
-        def constr_split(u, v, n, y):
-            x = api.vmap(inverse_observation_func, (None, 0, 0))(u, n, y)
+        def _generate_x_0(u, v_0):
+            return generate_x_0(generate_params(u, data), v_0, data)
+
+        def _forward_func(u, v, x):
+            return forward_func(generate_params(u, data), v, x, data)
+
+        def _inverse_observation_func(u, n, y):
+            return inverse_observation_func(generate_params(u, data), n, y, data)
+
+        def constr_split(u, v, n, y, data):
+            x = api.vmap(_inverse_observation_func, (None, 0, 0))(u, n, y)
             return (
                 np.concatenate(
                     (
-                        (generate_x_0(u, v[0]) - x[0])[None],
-                        api.vmap(forward_func, (None, 0, 0))(u, v[1:], x[:-1]) - x[1:],
+                        (_generate_x_0(u, v[0]) - x[0])[None],
+                        api.vmap(_forward_func, (None, 0, 0))(u, v[1:], x[:-1]) - x[1:],
                     )
                 ),
                 x,
             )
 
-        def jacob_constr_split_blocks(u, v, n, y):
+        def jacob_constr_split_blocks(u, v, n, y, data):
             x, (dx_du, dx_dn, dx_dy) = api.vmap(
-                api.value_and_grad(inverse_observation_func, (0, 1, 2)), (None, 0, 0)
+                api.value_and_grad(_inverse_observation_func, (0, 1, 2)), (None, 0, 0)
             )(u, n, y)
-            x0, (dx0_du, dx0_dv0) = api.value_and_grad(generate_x_0, (0, 1))(u, v[0])
+            x0, (dx0_du, dx0_dv0) = api.value_and_grad(_generate_x_0, (0, 1))(u, v[0])
             xp, (dxp_du, dxp_dvp, dxp_dxm) = api.vmap(
-                api.value_and_grad(forward_func, (0, 1, 2)), (None, 0, 0)
+                api.value_and_grad(_forward_func, (0, 1, 2)), (None, 0, 0)
             )(u, v[1:], x[:-1])
             c = np.concatenate((np.atleast_1d(x0 - x[0]), xp - x[1:]))
             dc_du = np.concatenate(

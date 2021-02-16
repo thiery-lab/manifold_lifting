@@ -143,7 +143,7 @@ def load_data_or_download(data_dir, data_file, fallback_urls, **loadtxt_kwargs):
         downloaded = False
         for url in fallback_urls:
             try:
-                with urlopen(url) as response, open(data_path, 'wb') as out_file:
+                with urlopen(url) as response, open(data_path, "wb") as out_file:
                     out_file.write(response.read())
                 downloaded = True
                 break
@@ -151,8 +151,8 @@ def load_data_or_download(data_dir, data_file, fallback_urls, **loadtxt_kwargs):
                 pass
         if not downloaded:
             raise FileNotFoundError(
-                f'Data file {data_file} does not exist in {data_dir} and could not be '
-                f'downloaded from {fallback_urls}.'
+                f"Data file {data_file} does not exist in {data_dir} and could not be "
+                f"downloaded from {fallback_urls}."
             )
     return np.loadtxt(data_path, **loadtxt_kwargs)
 
@@ -165,8 +165,8 @@ def load_regression_data(args, rng):
             fallback_urls=(
                 "https://archive.ics.uci.edu/ml/machine-learning-databases/"
                 "00243/yacht_hydrodynamics.data",
+            ),
             )
-        )
         raw_data = np.loadtxt(os.path.join(args.data_dir, "yacht_hydrodynamics.data"))
         x_indices = slice(0, 6)
         y_index = -1
@@ -180,7 +180,7 @@ def load_regression_data(args, rng):
                 "concrete/slump/slump_test.data",
             ),
             delimiter=",",
-            skiprows=1
+            skiprows=1,
         )
         x_indices = slice(1, 8)
         y_index = 9
@@ -191,10 +191,10 @@ def load_regression_data(args, rng):
             data_file="marthedata.txt",
             fallback_urls=(
                 "http://gdr-mascotnum.math.cnrs.fr/data2/benchmarks/marthe.txt",
-                "https://www.sfu.ca/~ssurjano/Code/marthedata.txt"
+                "https://www.sfu.ca/~ssurjano/Code/marthedata.txt",
             ),
             delimiter="\t",
-            skiprows=1
+            skiprows=1,
         )
         raw_data = np.loadtxt(
             os.path.join(args.data_dir, "marthedata.txt"), delimiter="\t", skiprows=1
@@ -339,11 +339,10 @@ def get_ssm_constrained_system_class_and_kwargs(
     else:
         constrained_system_class = mlift.AutoPartiallyInvertibleStateSpaceModelSystem
         constrained_system_kwargs = {
-            "generate_x_0": lambda u, v_0: generate_x_0(generate_params(u), v_0),
-            "forward_func": lambda u, v, x: forward_func(generate_params(u), v, x),
-            "inverse_observation_func": lambda u, n, y: inverse_observation_func(
-                generate_params(u), n, y
-            ),
+            "generate_params": generate_params,
+            "generate_x_0": generate_x_0,
+            "forward_func": forward_func,
+            "inverse_observation_func": inverse_observation_func,
         }
     return constrained_system_class, constrained_system_kwargs
 
