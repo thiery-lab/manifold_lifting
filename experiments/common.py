@@ -13,6 +13,12 @@ import arviz
 import numpy as np
 import mici
 import mlift
+from mlift.distributions import normal, pullback_distribution
+from mlift.transforms import (
+    unbounded_to_lower_bounded,
+    unbounded_to_upper_bounded,
+    unbounded_to_lower_and_upper_bounded,
+)
 
 
 def set_up_argparser_with_standard_arguments(description):
@@ -166,7 +172,7 @@ def load_regression_data(args, rng):
                 "https://archive.ics.uci.edu/ml/machine-learning-databases/"
                 "00243/yacht_hydrodynamics.data",
             ),
-            )
+        )
         raw_data = np.loadtxt(os.path.join(args.data_dir, "yacht_hydrodynamics.data"))
         x_indices = slice(0, 6)
         y_index = -1
@@ -296,29 +302,121 @@ def _set_up_hmc_mici_objects(args, neg_log_dens_hmc, grad_neg_log_dens_hmc):
 
 
 PriorSpecification = namedtuple(
-    "PriorSpecification", ("shape", "transform"), defaults=((), None)
+    "PriorSpecification",
+    ("shape", "distribution", "transform"),
+    defaults=((), normal(0, 1), None),
 )
 
 
-def get_param_generator_and_dimension(param_prior_specifications):
-    dim_u = sum(
-        int(np.product(spec.shape)) for spec in param_prior_specifications.values()
+def reparametrize_to_unbounded_support(prior_spec):
+    if (
+        prior_spec.distribution.support.lower != -np.inf
+        and prior_spec.distribution.support.upper != np.inf
+    ):
+        bounding_transform = unbounded_to_lower_and_upper_bounded(
+            prior_spec.distribution.support.lower, prior_spec.distribution.support.upper
+        )
+    elif prior_spec.distribution.support.lower != -np.inf:
+        bounding_transform = unbounded_to_lower_bounded(
+            prior_spec.distribution.support.lower
+        )
+    elif prior_spec.distribution.support.upper != np.inf:
+        bounding_transform = unbounded_to_upper_bounded(
+            prior_spec.distribution.support.upper
+        )
+    else:
+        return prior_spec
+    distribution = pullback_distribution(prior_spec.distribution, bounding_transform)
+    if prior_spec.transform is not None:
+        transform = lambda u: prior_spec.transform(bounding_transform(u))
+    else:
+        transform = bounding_transform
+    return PriorSpecification(
+        shape=prior_spec.shape, distribution=distribution, transform=transform
     )
 
-    def generate_params(u):
-        params = {}
+
+def reparametrize_to_standard_normal(prior_spec):
+    from_standard_normal_transform = (
+        prior_spec.distribution.from_standard_normal_transform
+    )
+    if prior_spec.transform is not None:
+        transform = lambda u: prior_spec.transform(from_standard_normal_transform(u))
+    else:
+        transform = from_standard_normal_transform
+    return PriorSpecification(
+        shape=prior_spec.shape, distribution=normal(0, 1), transform=transform
+    )
+
+
+def set_up_prior(prior_specs, try_to_reparametrize_to_standard_normal=False):
+
+    reparam_prior_specs = {}
+    all_standard_normal = True
+    for name, spec in prior_specs.items():
+        if (
+            try_to_reparametrize_to_standard_normal
+            and spec.distribution.from_standard_normal_transform is not None
+        ):
+            reparam_prior_specs[name] = reparametrize_to_standard_normal(spec)
+        else:
+            reparam_prior_specs[name] = reparametrize_to_unbounded_support(spec)
+            all_standard_normal = False
+
+    def get_shape(spec, data):
+        return spec.shape(data) if callable(spec.shape) else spec.shape
+
+    def compute_dim_u(data):
+        return sum(
+            int(np.product(get_shape(spec, data)))
+            for spec in reparam_prior_specs.values()
+        )
+
+    def iterate_over_specs_and_slices(u, data):
         i = 0
-        for (name, spec,) in param_prior_specifications.items():
-            size = int(np.product(spec.shape))
-            u_slice = u[i] if spec.shape == () else u[i : i + size].reshape(spec.shape)
+        for name, spec in reparam_prior_specs.items():
+            shape = get_shape(spec, data)
+            size = int(np.product(shape))
+            u_slice = u[i] if shape == () else u[i : i + size].reshape(shape)
             i += size
+            yield name, spec, u_slice
+
+    def generate_params(u, data):
+        params = {}
+        for name, spec, u_slice in iterate_over_specs_and_slices(u, data):
             if spec.transform is not None:
                 params[name] = spec.transform(u_slice)
             else:
                 params[name] = u_slice
         return params
 
-    return generate_params, dim_u
+    if all_standard_normal:
+
+        def prior_neg_log_dens(u, data):
+            return (u**2).sum() / 2
+
+        def sample_from_prior(rng, data):
+            dim_u = compute_dim_u(data)
+            return rng.standard_normal(dim_u)
+
+    else:
+
+        def prior_neg_log_dens(u, data):
+            nld = 0
+            for _, spec, u_slice in iterate_over_specs_and_slices(u, data):
+                nld += spec.distribution.neg_log_dens(u_slice)
+            return nld
+
+        def sample_from_prior(rng, data):
+            u_slices = []
+            for spec in reparam_prior_specs.values():
+                shape = get_shape(spec, data)
+                u_slices.append(
+                    np.atleast_1d(spec.distribution.sample(rng, shape).flatten())
+                )
+            return np.concatenate(u_slices)
+
+    return compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior
 
 
 def get_ssm_constrained_system_class_and_kwargs(
