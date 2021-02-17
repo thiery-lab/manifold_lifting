@@ -143,10 +143,7 @@ if __name__ == "__main__":
 
     # Define variables to be traced
 
-    def trace_func(state):
-        u = state.pos[:dim_u]
-        params = generate_params(u, data)
-        return {**params, "u": u}
+    trace_func = common.construct_trace_func(generate_params, data, dim_u)
 
     # Run experiment
 

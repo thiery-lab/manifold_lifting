@@ -124,9 +124,11 @@ if __name__ == "__main__":
 
     # Define variables to be traced
 
+    jitted_generate_params = api.jit(api.partial(generate_params, data=data))
+
     def trace_func(state):
         u = state.pos[:dim_u]
-        params = generate_params(u, data)
+        params = jitted_generate_params(u)
         return {**params, "u": u}
 
     # Run experiment

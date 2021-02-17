@@ -235,6 +235,27 @@ def set_up_logger(output_dir):
     return logger
 
 
+def construct_trace_func(generate_params, data, dim_u, dim_v=None):
+
+    jitted_generate_params = api.jit(api.partial(generate_params, data=data))
+
+    if dim_v is None:
+
+        def trace_func(state):
+            u = state.pos[:dim_u]
+            params = jitted_generate_params(u)
+            return {**params, "u": u}
+
+    else:
+
+        def trace_func(state):
+            u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_v]
+            params = jitted_generate_params(u)
+            return {**params, "u": u, "v": v}
+
+    return trace_func
+
+
 def set_up_mici_objects(
     args,
     rng,
