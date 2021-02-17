@@ -119,6 +119,15 @@ def set_up_argparser_with_standard_arguments(description):
         default=1e-8,
         help="Main stage tolerance for change in position norm in projection solver",
     )
+    parser.add_argument(
+        "--standard-normal-parametrization",
+        action="store_true",
+        default=False,
+        help=(
+            "Reparametrize prior distribution in terms of standard normal variates "
+            "where possible."
+        ),
+    )
     return parser
 
 
@@ -350,72 +359,58 @@ def reparametrize_to_standard_normal(prior_spec):
     )
 
 
-def set_up_prior(prior_specs, try_to_reparametrize_to_standard_normal=False):
-
-    reparam_prior_specs = {}
-    all_standard_normal = True
-    for name, spec in prior_specs.items():
-        if (
-            try_to_reparametrize_to_standard_normal
-            and spec.distribution.from_standard_normal_transform is not None
-        ):
-            reparam_prior_specs[name] = reparametrize_to_standard_normal(spec)
-        else:
-            reparam_prior_specs[name] = reparametrize_to_unbounded_support(spec)
-            all_standard_normal = False
-
+def set_up_prior(prior_specs):
     def get_shape(spec, data):
         return spec.shape(data) if callable(spec.shape) else spec.shape
 
-    def compute_dim_u(data):
-        return sum(
-            int(np.product(get_shape(spec, data)))
-            for spec in reparam_prior_specs.values()
-        )
+    def reparametrized_prior_specs(data):
+        for name, spec in prior_specs.items():
+            if (
+                data.get("parametrization") == "standard_normal"
+                and spec.distribution.from_standard_normal_transform is not None
+            ):
+                yield name, reparametrize_to_standard_normal(spec)
+            else:
+                yield name, reparametrize_to_unbounded_support(spec)
 
-    def iterate_over_specs_and_slices(u, data):
+    def reparametrized_prior_specs_and_u_slices(u, data):
         i = 0
-        for name, spec in reparam_prior_specs.items():
+        for name, spec in reparametrized_prior_specs(data):
             shape = get_shape(spec, data)
             size = int(np.product(shape))
             u_slice = u[i] if shape == () else u[i : i + size].reshape(shape)
             i += size
             yield name, spec, u_slice
 
+    def compute_dim_u(data):
+        return sum(
+            int(np.product(get_shape(spec, data)))
+            for _, spec in reparametrized_prior_specs(data)
+        )
+
     def generate_params(u, data):
         params = {}
-        for name, spec, u_slice in iterate_over_specs_and_slices(u, data):
+        for name, spec, u_slice in reparametrized_prior_specs_and_u_slices(u, data):
             if spec.transform is not None:
                 params[name] = spec.transform(u_slice)
             else:
                 params[name] = u_slice
         return params
 
-    if all_standard_normal:
+    def prior_neg_log_dens(u, data):
+        nld = 0
+        for _, spec, u_slice in reparametrized_prior_specs_and_u_slices(u, data):
+            nld += spec.distribution.neg_log_dens(u_slice)
+        return nld
 
-        def prior_neg_log_dens(u, data):
-            return (u**2).sum() / 2
-
-        def sample_from_prior(rng, data):
-            dim_u = compute_dim_u(data)
-            return rng.standard_normal(dim_u)
-
-    else:
-
-        def prior_neg_log_dens(u, data):
-            nld = 0
-            for _, spec, u_slice in iterate_over_specs_and_slices(u, data):
-                nld += spec.distribution.neg_log_dens(u_slice)
-            return nld
-
-        def sample_from_prior(rng, data):
-            u_slices = []
-            for spec in reparam_prior_specs.values():
-                shape = get_shape(spec, data)
-                u_slices.append(
-                    np.atleast_1d(spec.distribution.sample(rng, shape).flatten())
-                )
-            return np.concatenate(u_slices)
+    def sample_from_prior(rng, data):
+        u_slices = []
+        for _, spec in reparametrized_prior_specs(data):
+            shape = get_shape(spec, data)
+            u_slices.append(
+                np.atleast_1d(spec.distribution.sample(rng, shape).flatten())
+            )
+        return np.concatenate(u_slices)
 
     return compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior
 
@@ -586,6 +581,13 @@ def run_experiment(
     output_dir = set_up_output_directory(args, experiment_name, dir_prefix)
     set_up_logger(output_dir)
 
+    # Add parametrization flag to data dictionary if relevant argument present
+
+    if args.standard_normal_parametrization:
+        # Reparameterize in terms of variables that are transforms of standard normal
+        # variables where possible
+        data["parametrization"] = "standard_normal"
+
     # Set up Mici objects
     (
         neg_log_dens_hmc,
@@ -638,12 +640,12 @@ def run_experiment(
     compile_time = precompile_jax_functions(init_states[0].pos, args, system)
     print(f"Total compile time: {compile_time:.0f} seconds")
 
-    # Sample chains
-
     # Ignore NumPy floating point overflow warnings
     # Prevents warning messages being produced while progress bars are being printed
 
     np.seterr(over="ignore")
+
+    # Sample chains
 
     final_states, traces, stats, sampling_time = sample_chains(
         args, sampler, init_states, trace_funcs, adapters, output_dir, monitor_stats
@@ -652,8 +654,12 @@ def run_experiment(
     print(f"Integrator step size: {integrator.step_size:.2g}")
     print(f"Total sampling time: {sampling_time:.0f} seconds")
 
+    # Compute and display summary of time spent on different operation
+
     print("Computing chain operation times ...")
     operation_times = compute_and_print_operation_times(system, final_states)
+
+    # Compute, display and save summary of statistics of traced chain variables
 
     summary_vars = var_names + ["hamiltonian"]
     summary, summary_dict = compute_and_save_summary(
