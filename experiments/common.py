@@ -11,6 +11,7 @@ from urllib.request import urlopen
 from urllib.error import HTTPError
 import arviz
 import numpy as np
+import jax.api as api
 import mici
 import mlift
 from mlift.distributions import normal, pullback_distribution
@@ -590,7 +591,7 @@ def run_experiment(
         neg_log_dens_hmc,
         grad_neg_log_dens_hmc,
     ) = mlift.construct_mici_system_neg_log_dens_functions(
-        lambda u: posterior_neg_log_dens(u, data)
+        api.partial(posterior_neg_log_dens, data=data)
     )
 
     if extended_prior_neg_log_dens is not None:
@@ -598,10 +599,10 @@ def run_experiment(
             neg_log_dens_chmc,
             grad_neg_log_dens_chmc,
         ) = mlift.construct_mici_system_neg_log_dens_functions(
-            lambda q: extended_prior_neg_log_dens(q, data)
+            api.partial(extended_prior_neg_log_dens, data=data)
         )
-        constrained_system_kwargs['neg_log_dens'] = neg_log_dens_chmc
-        constrained_system_kwargs['grad_neg_log_dens'] = grad_neg_log_dens_chmc
+        constrained_system_kwargs["neg_log_dens"] = neg_log_dens_chmc
+        constrained_system_kwargs["grad_neg_log_dens"] = grad_neg_log_dens_chmc
 
     system, integrator, sampler, adapters, monitor_stats = set_up_mici_objects(
         args,
