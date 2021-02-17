@@ -17,7 +17,6 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
-from mlift.transforms import normal_to_half_cauchy
 from mlift.distributions import normal, half_cauchy
 from experiments import common
 
@@ -38,21 +37,15 @@ prior_specifications = {
 ) = common.set_up_prior(prior_specifications)
 
 
-def generate_x(u, v, data):
+def generate_from_model(u, v, data):
     params = generate_params(u, data)
     x = params["μ"] + params["τ"] * v
     return params, x
 
 
-def generate_from_model(u, v, n, data):
-    params, x = generate_x(u, v, data)
-    y = x + data["σ"] * n
-    return params, x, y
-
-
 def generate_y(u, v, n, data):
-    _, _, y = generate_from_model(u, v, n, data)
-    return y
+    _, x = generate_from_model(u, v, data)
+    return x + data["σ"] * n
 
 
 def extended_prior_neg_log_dens(q, data):
@@ -65,7 +58,7 @@ def extended_prior_neg_log_dens(q, data):
 def posterior_neg_log_dens(q, data):
     dim_u = compute_dim_u(data)
     u, v = q[:dim_u], q[dim_u:]
-    _, x = generate_x(u, v, data)
+    _, x = generate_from_model(u, v, data)
     return (
         prior_neg_log_dens(u, data)
         + (v ** 2).sum() / 2
@@ -81,7 +74,7 @@ def sample_initial_states(rng, args, data):
         u = sample_from_prior(rng, data)
         v = rng.standard_normal(dim_y)
         if args.algorithm == "chmc":
-            _, x = generate_x(u, v, data)
+            _, x = generate_from_model(u, v, data)
             n = (data["y_obs"] - x) / data["σ"]
             q = onp.concatenate((u, v, onp.asarray(n)))
             assert (
@@ -117,7 +110,7 @@ if __name__ == "__main__":
 
     def trace_func(state):
         u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_y]
-        params, x = generate_x(u, v, data)
+        params, x = generate_from_model(u, v, data)
         return {**params, "x": x, "u": u, "v": v}
 
     # Run experiment
