@@ -48,7 +48,7 @@ def _compute_dt_seq(t_seq, dt):
     cumulative_steps = full_steps.cumsum()
     dt_seq = onp.ones(cumulative_steps[-1]) * dt
     dt_seq[(cumulative_steps - 1)[remainders > 0]] = remainders[remainders > 0]
-    return dt_seq, cumulative_steps
+    return dt_seq, cumulative_steps - 1
 
 
 def integrate_ode_adaptive(
