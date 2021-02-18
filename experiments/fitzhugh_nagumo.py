@@ -8,7 +8,7 @@ import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
 import mlift
-from mlift.distributions import log_normal
+from mlift.distributions import log_normal, normal
 from mlift.ode import integrate_ode_rk4
 from experiments import common
 
@@ -21,10 +21,10 @@ prior_specifications = {
     "β": common.PriorSpecification(distribution=log_normal(0, 1)),
     "γ": common.PriorSpecification(distribution=log_normal(0, 1)),
     "δ": common.PriorSpecification(distribution=log_normal(-1, 1)),
-    "ϵ": common.PriorSpecification(distribution=log_normal(-2, 1)),
+    "ϵ": common.PriorSpecification(distribution=log_normal(-3, 1)),
     "ζ": common.PriorSpecification(distribution=log_normal(-2, 1)),
     "σ": common.PriorSpecification(distribution=log_normal(-1, 1)),
-    "x_init": common.PriorSpecification(shape=(2,), distribution=log_normal(0, 1)),
+    "x_init": common.PriorSpecification(shape=(2,), distribution=normal(0, 1)),
 }
 
 (
