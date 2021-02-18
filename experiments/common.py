@@ -562,31 +562,22 @@ def compute_and_print_operation_times(system, final_states, num_call=2000):
         av_times_per_func_call[func_name] = (
             timeit.timeit(func, number=num_call) / num_call
         )
-    for c, state in enumerate(final_states):
-        print("-" * 80 + f"\nChain {c}\n" + "-" * 80)
+    for state in final_states:
         chain_time = 0
         func_times = {}
         for (qualified_func_name, _), call_count in state._call_counts.items():
             _, func_name = qualified_func_name.split(".")
             av_time_per_call = av_times_per_func_call[func_name]
             func_times[func_name] = call_count * av_time_per_call
-            print(
-                f"  {func_name}: {call_count} calls × {av_time_per_call:.3g}"
-                f" seconds/call = {func_times[func_name]:.3g} seconds"
-            )
             chain_time += func_times[func_name]
-        print("-" * 80)
-        print(f"Total chain operation time: {chain_time:.3g} seconds")
         chain_times.append(chain_time)
         chain_func_times.append(func_times)
-    print("=" * 80)
     total_time = sum(chain_times)
-    print(f"Total operation time: {total_time:.3g} seconds")
     return {
         "total_operation_time": total_time,
         "per_chain_total_operation_times": chain_times,
         "per_chain_operation_times": chain_func_times,
-        "averge_times_per_operation": av_times_per_func_call,
+        "average_times_per_operation": av_times_per_func_call,
     }
 
 
@@ -699,6 +690,9 @@ def run_experiment(
 
     print("Computing chain operation times ...")
     operation_times = compute_and_print_operation_times(system, final_states)
+    print(
+        f"Total operation time: {operation_times['total_operation_time']:.3g} seconds"
+    )
 
     # Compute, display and save summary of statistics of traced chain variables
 
