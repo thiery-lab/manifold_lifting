@@ -76,13 +76,33 @@ def posterior_neg_log_dens(u, data):
 
 
 def sample_initial_states(rng, args, data):
-    """Sample initial states from prior."""
+    """Sample initial state using approximate Bayesian computation reject type approach.
+
+    Use an approximate Bayesian computation type approach of repeatedly sampling from
+    prior until peak times of sequence (without noise) generated from state matches peak
+    times of (noisy) observation sequence to within a tolerance. This helps to avoid
+    chains getting trapped in 'bad' modes.
+    """
     init_states = []
-    for _ in range(args.num_chain):
+    peak_times_obs = common.calculate_peak_times(data["y_obs"], data["t_seq"], 40, 0)
+    num_tries = 0
+    jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
+    while len(init_states) < args.num_chain and num_tries < args.max_init_tries:
         u = sample_from_prior(rng, data)
+        params, x = jitted_generate_from_model(u)
+        if not onp.all(onp.isfinite(x)):
+            num_tries += 1
+            continue
+        y_mean = observation_func(x)
+        peak_times = common.calculate_peak_times(y_mean, data["t_seq"], 40, 0)
+        if not (
+            peak_times.shape[0] == peak_times_obs.shape[0]
+            and abs(peak_times - peak_times_obs).max()
+            < args.init_peak_time_diff_threshold
+        ):
+            num_tries += 1
+            continue
         if args.algorithm == "chmc":
-            params, x = generate_from_model(u, data)
-            y_mean = observation_func(x)
             n = (data["y_obs"] - y_mean) / params["σ"]
             q = onp.concatenate((u, onp.asarray(n)))
             assert (
@@ -92,6 +112,12 @@ def sample_initial_states(rng, args, data):
         else:
             q = u
         init_states.append(q)
+        num_tries += 1
+    if len(init_states) != args.num_chain:
+        raise RuntimeError(
+            f"Failed to find {args.num_chain} acceptable initial states in "
+            f"{args.max_init_tries} tries."
+        )
     return init_states
 
 
@@ -107,6 +133,18 @@ if __name__ == "__main__":
         type=float,
         default=0.1,
         help="Standard deviation of observation noise to use in simulated data",
+    )
+    parser.add_argument(
+        "--max-init-tries",
+        type=int,
+        default=10000,
+        help="Maximum number of prior samples to try to find acceptable initial states",
+    )
+    parser.add_argument(
+        "--init-peak-time-diff-threshold",
+        type=float,
+        default=1.0,
+        help="Maximum difference between peak times of initial state and observations",
     )
     args = parser.parse_args()
 

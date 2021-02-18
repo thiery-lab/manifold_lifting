@@ -21,7 +21,7 @@ prior_specifications = {
     "g_bar_M": common.PriorSpecification(distribution=log_normal(-3, 1)),
     "g_leak": common.PriorSpecification(distribution=log_normal(-3, 1)),
     "v_t": common.PriorSpecification(distribution=normal(-60, 10)),
-    "σ": common.PriorSpecification(distribution=log_normal(1, 1)),
+    "σ": common.PriorSpecification(distribution=log_normal(0, 1)),
 }
 
 (
@@ -225,33 +225,39 @@ def sample_initial_states(rng, args, data):
     """Sample initial state using approximate Bayesian computation reject type approach.
 
     Use an approximate Bayesian computation type approach of repeatedly sampling from
-    prior until spikes times of sequence (wihout noise) generated from state matches
-    (noisy) observation sequence to within a tolerance. This helps to avoid chains
-    getting trapped in 'bad' modes.
+    prior until peak times of sequence (without noise) generated from state matches peak
+    times of (noisy) observation sequence to within a tolerance. This helps to avoid
+    chains getting trapped in 'bad' modes.
     """
     init_states = []
-    spike_times_obs = calculate_spike_times(data["y_obs"], data)
+    peak_times_obs = common.calculate_peak_times(data["y_obs"], data["t_obs"], 10, -10)
     num_tries = 0
-    jitted_generate_from_model = api.jit(lambda u: generate_from_model(u, data))
+    jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
     while len(init_states) < args.num_chain and num_tries < args.max_init_tries:
         u = sample_from_prior(rng, data)
         params, x = jitted_generate_from_model(u)
-        spike_times = calculate_spike_times(x, data)
-        if (
-            spike_times.shape[0] == spike_times_obs.shape[0]
-            and abs(spike_times - spike_times_obs).max()
-            < args.init_spike_time_diff_threshold
+        if not onp.all(onp.isfinite(x)):
+            num_tries += 1
+            continue
+        peak_times = common.calculate_peak_times(x, data["t_obs"], 10, -10)
+        n = (data["y_obs"] - x) / params["σ"]
+        if not (
+            peak_times.shape[0] == peak_times_obs.shape[0]
+            and abs(peak_times - peak_times_obs).max()
+            < args.init_peak_time_diff_threshold
+            and (n**2).mean() < 100
         ):
-            if args.algorithm == "chmc":
-                n = (data["y_obs"] - x) / params["σ"]
-                q = onp.concatenate((u, onp.asarray(n)))
-                assert (
-                    abs(x + params["σ"] * n - data["y_obs"]).max()
-                    < args.projection_solver_warm_up_constraint_tol
-                )
-            else:
-                q = u
-            init_states.append(q)
+            num_tries += 1
+            continue
+        if args.algorithm == "chmc":
+            q = onp.concatenate((u, onp.asarray(n)))
+            assert (
+                abs(x + params["σ"] * n - data["y_obs"]).max()
+                < args.projection_solver_warm_up_constraint_tol
+            )
+        else:
+            q = u
+        init_states.append(q)
         num_tries += 1
     if len(init_states) != args.num_chain:
         raise RuntimeError(
@@ -281,10 +287,10 @@ if __name__ == "__main__":
         help="Maximum number of prior samples to try to find acceptable initial states",
     )
     parser.add_argument(
-        "--init-spike-time-diff-threshold",
+        "--init-peak-time-diff-threshold",
         type=float,
-        default=1.0,
-        help="Maximum difference between spike times of initial state and observations",
+        default=2.0,
+        help="Maximum difference between peak times of initial state and observations",
     )
     args = parser.parse_args()
 
