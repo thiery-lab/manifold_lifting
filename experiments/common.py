@@ -486,6 +486,26 @@ def add_ssm_specific_args(parser):
     return parser
 
 
+def calculate_peak_times(x_seq, t_seq, window_width, threshold):
+    """Calculate times of peaks (maxima) in a time series.
+
+    Args:
+        x_seq (ArrayLike): 1D array containing values of series.
+        t_seq (ArrayLike): 1D array containing times of series.
+        window_width (int): Width of window used to smooth series.
+        threshold (float): Threshold to clip smoothed series below.
+
+    Returns:
+        Array of entries in `t_seq` corresponding to peaks of series.
+    """
+    smoothing_window = np.hanning(window_width + 2)[1:-1]
+    smoothing_window /= smoothing_window.sum()
+    v_seq = np.convolve(x_seq, smoothing_window, "same")
+    v_seq = np.clip(v_seq, threshold, None)
+    v_seq[np.where(np.diff(v_seq) < 0)] = threshold
+    return t_seq[np.where(np.diff(v_seq) < 0)]
+
+
 def precompile_jax_functions(q, args, system):
     start_time = time.time()
     if args.algorithm == "chmc":
