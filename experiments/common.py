@@ -434,7 +434,7 @@ def sample_chains(
     return final_states, traces, stats, sampling_time
 
 
-def compute_and_print_operation_times(system, final_states, num_call=2000):
+def compute_operation_times(system, final_states, num_call=2000):
     chain_times = []
     chain_func_times = []
     av_times_per_func_call = {}
@@ -585,7 +585,7 @@ def run_experiment(
     # Compute and display summary of time spent on different operation
 
     print("Computing chain operation times ...")
-    operation_times = compute_and_print_operation_times(system, final_states)
+    operation_times = compute_operation_times(system, final_states)
     print(
         f"Total operation time: {operation_times['total_operation_time']:.3g} seconds"
     )
