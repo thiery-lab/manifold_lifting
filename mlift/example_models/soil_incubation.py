@@ -80,27 +80,25 @@ def posterior_neg_log_dens(u, data):
     )
 
 
-def sample_initial_states(rng, args, data):
+def sample_initial_states(
+    rng, data, num_chain=4, algorithm="chmc", mean_residual_sq_threshold=1e6
+):
     """Sample initial states from prior."""
     init_states = []
-    while len(init_states) < args.num_chain:
+    while len(init_states) < num_chain:
         u = sample_from_prior(rng, data)
         params, x = generate_from_model(u, data)
         y_mean = observation_func(x, data)
         if not onp.all(np.isfinite(y_mean)):
             continue
         n = (data["y_obs"] - y_mean) / params["σ"]
-        if (n ** 2).mean() > 1e6:
+        if (n ** 2).mean() > mean_residual_sq_threshold:
             # Skip initialisations with large residuals as can cause numerical issues
             continue
-        if args.algorithm == "chmc":
+        if algorithm == "chmc":
             q = onp.concatenate((u, onp.asarray(n)))
-            assert (
-                abs(y_mean + params["σ"] * n - data["y_obs"]).max()
-                < args.projection_solver_warm_up_constraint_tol
-            )
         else:
-            q = u
+            q = onp.asarray(u)
         init_states.append(q)
     return init_states
 

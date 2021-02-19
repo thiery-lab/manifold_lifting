@@ -64,21 +64,17 @@ def posterior_neg_log_dens(q, data):
     )
 
 
-def sample_initial_states(rng, args, data):
+def sample_initial_states(rng, data, num_chain=4, algorithm="chmc"):
     """Sample initial states from prior."""
     init_states = []
     dim_y = data["y_obs"].shape[0]
-    for _ in range(args.num_chain):
+    for _ in range(num_chain):
         u = sample_from_prior(rng, data)
         v = rng.standard_normal(dim_y)
-        if args.algorithm == "chmc":
+        if algorithm == "chmc":
             _, x = generate_from_model(u, v, data)
             n = (data["y_obs"] - x) / data["σ"]
             q = onp.concatenate((u, v, onp.asarray(n)))
-            assert (
-                abs(x + data["σ"] * n - data["y_obs"]).max()
-                < args.projection_solver_warm_up_constraint_tol
-            )
         else:
             q = onp.concatenate((u, v))
         init_states.append(q)

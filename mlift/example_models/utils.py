@@ -563,7 +563,7 @@ def run_experiment(
     # Initialise chain states
 
     print("Sampling initial states ...")
-    init_states = sample_initial_states(rng, args, data)
+    init_states = sample_initial_states(rng, data, args.num_chain, args.algorithm)
     init_states = [
         mici.states.ChainState(pos=q, mom=None, dir=1, _call_counts={})
         for q in init_states

@@ -59,21 +59,17 @@ def posterior_neg_log_dens(u, data):
     )
 
 
-def sample_initial_states(rng, args, data):
+def sample_initial_states(rng, data, num_chain=4, algorithm="chmc"):
     """Sample initial states from prior."""
     init_states = []
-    for _ in range(args.num_chain):
+    for _ in range(num_chain):
         u = sample_from_prior(rng, data)
-        if args.algorithm == "chmc":
+        if algorithm == "chmc":
             chol_covar = onp.linalg.cholesky(covar_func(u, data))
             n = sla.solve_triangular(chol_covar, data["y_obs"], lower=True)
             q = onp.concatenate((u, onp.asarray(n)))
-            assert (
-                abs(chol_covar @ n - data["y_obs"]).max()
-                < args.projection_solver_warm_up_constraint_tol
-            )
         else:
-            q = u
+            q = onp.asarray(u)
         init_states.append(q)
     return init_states
 
