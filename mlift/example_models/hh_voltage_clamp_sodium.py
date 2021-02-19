@@ -10,10 +10,10 @@ import jax.config
 import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
-import mlift
+from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import log_normal
 from mlift.prior import PriorSpecification, set_up_prior
-from experiments import common
+import mlift.example_models.utils as utils
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     # Process command line arguments defining experiment parameters
 
-    parser = common.set_up_argparser_with_standard_arguments(
+    parser = utils.set_up_argparser_with_standard_arguments(
         "Run Hodgkin-Huxley model voltage-clamp data experiment"
     )
     args = parser.parse_args()
@@ -141,11 +141,11 @@ if __name__ == "__main__":
 
     # Define variables to be traced
 
-    trace_func = common.construct_trace_func(generate_params, data, dim_u)
+    trace_func = utils.construct_trace_func(generate_params, data, dim_u)
 
     # Run experiment
 
-    final_states, traces, stats, summary_dict, sampler = common.run_experiment(
+    final_states, traces, stats, summary_dict, sampler = utils.run_experiment(
         args=args,
         data=data,
         dim_u=dim_u,
@@ -155,7 +155,7 @@ if __name__ == "__main__":
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         extended_prior_neg_log_dens=extended_prior_neg_log_dens,
-        constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
+        constrained_system_class=IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,
             "data": data,

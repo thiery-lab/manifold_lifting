@@ -7,11 +7,11 @@ import jax.config
 import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
-import mlift
+from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import log_normal, normal
 from mlift.ode import integrate_ode_rk4
 from mlift.prior import PriorSpecification, set_up_prior
-from experiments import common
+import mlift.example_models.utils as utils
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
@@ -82,7 +82,7 @@ def sample_initial_states(rng, args, data):
     chains getting trapped in 'bad' modes.
     """
     init_states = []
-    peak_times_obs = common.calculate_peak_times(data["y_obs"], data["t_seq"], 40, 0)
+    peak_times_obs = utils.calculate_peak_times(data["y_obs"], data["t_seq"], 40, 0)
     num_tries = 0
     jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
     while len(init_states) < args.num_chain and num_tries < args.max_init_tries:
@@ -92,7 +92,7 @@ def sample_initial_states(rng, args, data):
             num_tries += 1
             continue
         y_mean = observation_func(x)
-        peak_times = common.calculate_peak_times(y_mean, data["t_seq"], 40, 0)
+        peak_times = utils.calculate_peak_times(y_mean, data["t_seq"], 40, 0)
         if not (
             peak_times.shape[0] == peak_times_obs.shape[0]
             and abs(peak_times - peak_times_obs).max()
@@ -123,7 +123,7 @@ if __name__ == "__main__":
 
     # Process command line arguments defining experiment parameters
 
-    parser = common.set_up_argparser_with_standard_arguments(
+    parser = utils.set_up_argparser_with_standard_arguments(
         "Run FitzHuhgh-Nagumo model simulated data experiment"
     )
     parser.add_argument(
@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     # Run experiment
 
-    final_states, traces, stats, summary_dict, sampler = common.run_experiment(
+    final_states, traces, stats, summary_dict, sampler = utils.run_experiment(
         args=args,
         data=data,
         dim_u=dim_u,
@@ -180,7 +180,7 @@ if __name__ == "__main__":
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
         extended_prior_neg_log_dens=extended_prior_neg_log_dens,
-        constrained_system_class=mlift.IndependentAdditiveNoiseModelSystem,
+        constrained_system_class=IndependentAdditiveNoiseModelSystem,
         constrained_system_kwargs={
             "generate_y": generate_y,
             "data": data,

@@ -1,8 +1,7 @@
-mici>=0.1.8
-symnum>=0.1.0
-numpy>=1.15
-scipy>=1.1
-sympy>=1.5
+mici>=0.1.10
+symnum>=0.1.1
+numpy>=1.18
+scipy>=1.5
+sympy>=1.7
 matplotlib>=3.1
-jupyter>=1.0
-arviz>=0.5
+arviz>=0.11

@@ -6,10 +6,10 @@ import jax.config
 import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
-import mlift
+from mlift import construct_state_space_model_generators
 from mlift.distributions import half_normal, uniform
 from mlift.prior import PriorSpecification, set_up_prior
-from experiments import common
+import mlift.example_models.utils as utils
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
@@ -42,7 +42,7 @@ def inverse_observation_func(params, n, y, data):
     return y - params["σ"] * n
 
 
-generate_from_model, generate_y = mlift.construct_state_space_model_generators(
+generate_from_model, generate_y = construct_state_space_model_generators(
     generate_params=generate_params,
     generate_x_0=generate_x_0,
     forward_func=forward_func,
@@ -140,7 +140,7 @@ if __name__ == "__main__":
 
     # Process command line arguments defining experiment parameters
 
-    parser = common.set_up_argparser_with_standard_arguments(
+    parser = utils.set_up_argparser_with_standard_arguments(
         "Run latent GARCH simulated data experiment"
     )
     parser.add_argument(
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         default=1.0,
         help="Standard deviation of observation noise to use in simulated data",
     )
-    common.add_ssm_specific_args(parser)
+    utils.add_ssm_specific_args(parser)
     args = parser.parse_args()
 
     # Load data
@@ -167,14 +167,14 @@ if __name__ == "__main__":
 
     # Define variables to be traced
 
-    trace_func = common.construct_trace_func(generate_params, data, dim_u, dim_v=dim_y)
+    trace_func = utils.construct_trace_func(generate_params, data, dim_u, dim_v=dim_y)
 
     # Run experiment
 
     (
         constrained_system_class,
         constrained_system_kwargs,
-    ) = common.get_ssm_constrained_system_class_and_kwargs(
+    ) = utils.get_ssm_constrained_system_class_and_kwargs(
         args.use_manual_constraint_and_jacobian,
         generate_params,
         generate_x_0,
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     )
     constrained_system_kwargs.update(data=data, dim_u=dim_u)
 
-    final_states, traces, stats, summary_dict, sampler = common.run_experiment(
+    final_states, traces, stats, summary_dict, sampler = utils.run_experiment(
         args=args,
         data=data,
         dim_u=dim_u,
