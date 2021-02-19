@@ -425,6 +425,12 @@ def sample_chains(
     sampling_time = time.time() - start_time
     with open(os.path.join(output_dir, "final_chain_states.pkl"), mode="w+b") as f:
         pickle.dump(final_states, f)
+    if args.algorithm == "hmc":
+        if args.metric_type == "diagonal":
+            metric_array = sampler.system.metric.diagonal
+        else:
+            metric_array = sampler.system.metric.array
+        np.save(os.path.join(output_dir, 'final_metric.npy'), metric_array)
     return final_states, traces, stats, sampling_time
 
 
