@@ -299,9 +299,9 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
         self._lmult_by_inv_jacob_product(*jac_blocks, *jac_blocks, c)
         self._normal_space_component(jac_blocks, gram_components, q)
         self._quasi_newton_projection(
-            q, jac_blocks, gram_components, 1, 0.1, 0.1, 10, 10, solver_norm
+            q, jac_blocks, gram_components, 1., 0.1, 0.1, 1., 10, solver_norm
         )
-        self._newton_projection(q, jac_blocks, 1, 0.1, 0.1, 10, 10, solver_norm)
+        self._newton_projection(q, jac_blocks, 1., 0.1, 0.1, 1., 10, solver_norm)
 
     @cache_in_state("pos")
     def constr(self, state):
