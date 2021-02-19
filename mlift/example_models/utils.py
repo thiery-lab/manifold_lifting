@@ -325,7 +325,6 @@ def _set_up_hmc_mici_objects(args, neg_log_dens_hmc, grad_neg_log_dens_hmc):
     return system, integrator, adapters, monitor_stats
 
 
-
 def get_ssm_constrained_system_class_and_kwargs(
     use_manual_constraint_and_jacobian,
     generate_params,
@@ -430,7 +429,7 @@ def sample_chains(
             metric_array = sampler.system.metric.diagonal
         else:
             metric_array = sampler.system.metric.array
-        np.save(os.path.join(output_dir, 'final_metric.npy'), metric_array)
+        np.save(os.path.join(output_dir, "final_metric.npy"), metric_array)
     return final_states, traces, stats, sampling_time
 
 
@@ -504,10 +503,18 @@ def run_experiment(
     extended_prior_neg_log_dens=None,
     dir_prefix=None,
 ):
+
+    print(
+        f"Running experiment with {experiment_name} model using "
+        f"{args.algorithm.upper()} algorithm for inference"
+    )
+
     # Set up output directory and logger
 
     output_dir = set_up_output_directory(args, experiment_name, dir_prefix)
     set_up_logger(output_dir)
+
+    print(f"Results will be saved to {output_dir}")
 
     # Add parametrization flag to data dictionary if relevant argument present
 
