@@ -220,7 +220,7 @@ def sample_initial_states(
     peak_time_diff_threshold=2,
     smoothing_window_width=10,
     peak_value_threshold=-10,
-    mean_residual_sq_threshold=1000
+    mean_residual_sq_threshold=100
 ):
     """Sample initial state using approximate Bayesian computation reject type approach.
 
