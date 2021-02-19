@@ -62,7 +62,7 @@ def set_up_prior(prior_specs):
     def reparametrized_prior_specs(data):
         for name, spec in prior_specs.items():
             if (
-                data.get("parametrization") == "standard_normal"
+                data.get("parametrization") == "normal"
                 and spec.distribution.from_standard_normal_transform is not None
             ):
                 yield name, reparametrize_to_standard_normal(spec)

@@ -32,6 +32,16 @@ def set_up_argparser_with_standard_arguments(description):
         help="Which algorithm to perform inference with, from: chmc, hmc",
     )
     parser.add_argument(
+        "--prior-parametrization",
+        choices=("unbounded", "normal"),
+        default="unbounded",
+        help=(
+            "Parameterization to use for prior distribution. Default is to transform "
+            "all parameters in terms of unbounded variables. Alternatively parameters "
+            "may be expressed as transforms of standard normal variates where possible."
+        )
+    )
+    parser.add_argument(
         "--seed", type=int, default=202101, help="Seed for random number generator"
     )
     parser.add_argument(
@@ -111,15 +121,6 @@ def set_up_argparser_with_standard_arguments(description):
         type=float,
         default=1e-8,
         help="Main stage tolerance for change in position norm in projection solver",
-    )
-    parser.add_argument(
-        "--standard-normal-parametrization",
-        action="store_true",
-        default=False,
-        help=(
-            "Reparametrize prior distribution in terms of standard normal variates "
-            "where possible."
-        ),
     )
     return parser
 
@@ -516,12 +517,9 @@ def run_experiment(
 
     print(f"Results will be saved to {output_dir}")
 
-    # Add parametrization flag to data dictionary if relevant argument present
+    # Add parametrization flag to data dictionary
 
-    if args.standard_normal_parametrization:
-        # Reparameterize in terms of variables that are transforms of standard normal
-        # variables where possible
-        data["parametrization"] = "standard_normal"
+    data["parametrization"] = args.prior_parametrization
 
     # Set up Mici objects
     (
