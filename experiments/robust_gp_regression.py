@@ -7,8 +7,6 @@ import jax.config
 import jax.numpy as np
 import jax.lax as lax
 import jax.api as api
-import jax.scipy.linalg as sla
-from jax.scipy.special import polygamma
 import mlift
 from mlift.transforms import standard_normal_to_students_t
 from mlift.distributions import half_normal, inverse_gamma, students_t
