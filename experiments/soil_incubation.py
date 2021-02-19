@@ -91,8 +91,11 @@ def sample_initial_states(rng, args, data):
         y_mean = observation_func(x, data)
         if not onp.all(np.isfinite(y_mean)):
             continue
+        n = (data["y_obs"] - y_mean) / params["σ"]
+        if (n**2).mean() > 1e6:
+            # Skip initialisations with large residuals as can cause numerical issues
+            continue
         if args.algorithm == "chmc":
-            n = (data["y_obs"] - y_mean) / params["σ"]
             q = onp.concatenate((u, onp.asarray(n)))
             assert (
                 abs(y_mean + params["σ"] * n - data["y_obs"]).max()
