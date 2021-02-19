@@ -12,6 +12,7 @@ import jax.api as api
 import mlift
 from mlift.distributions import half_normal, half_cauchy, beta
 from mlift.ode import integrate_ode_rk4
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -19,20 +20,17 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "k_1": common.PriorSpecification(distribution=half_normal(1)),
-    "k_2": common.PriorSpecification(distribution=half_normal(1)),
-    "α_21": common.PriorSpecification(distribution=half_normal(1)),
-    "α_12": common.PriorSpecification(distribution=half_normal(1)),
-    "γ": common.PriorSpecification(distribution=beta(10, 1)),
-    "σ": common.PriorSpecification(distribution=half_cauchy(1)),
+    "k_1": PriorSpecification(distribution=half_normal(1)),
+    "k_2": PriorSpecification(distribution=half_normal(1)),
+    "α_21": PriorSpecification(distribution=half_normal(1)),
+    "α_12": PriorSpecification(distribution=half_normal(1)),
+    "γ": PriorSpecification(distribution=beta(10, 1)),
+    "σ": PriorSpecification(distribution=half_cauchy(1)),
 }
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
 def dx_dt(x, t, params):
@@ -92,7 +90,7 @@ def sample_initial_states(rng, args, data):
         if not onp.all(np.isfinite(y_mean)):
             continue
         n = (data["y_obs"] - y_mean) / params["σ"]
-        if (n**2).mean() > 1e6:
+        if (n ** 2).mean() > 1e6:
             # Skip initialisations with large residuals as can cause numerical issues
             continue
         if args.algorithm == "chmc":

@@ -12,6 +12,7 @@ import jax.lax as lax
 import jax.api as api
 import mlift
 from mlift.distributions import log_normal
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -19,25 +20,22 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "k_alpha_m_1": common.PriorSpecification(distribution=log_normal(-3, 1)),
-    "k_alpha_m_2": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "k_alpha_m_3": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "k_beta_m_1": common.PriorSpecification(distribution=log_normal(0, 1)),
-    "k_beta_m_2": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "k_alpha_h_1": common.PriorSpecification(distribution=log_normal(-3, 1)),
-    "k_alpha_h_2": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "k_beta_h_1": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "k_beta_h_2": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "g_bar_Na": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "σ": common.PriorSpecification(distribution=log_normal(0, 1)),
+    "k_alpha_m_1": PriorSpecification(distribution=log_normal(-3, 1)),
+    "k_alpha_m_2": PriorSpecification(distribution=log_normal(2, 1)),
+    "k_alpha_m_3": PriorSpecification(distribution=log_normal(2, 1)),
+    "k_beta_m_1": PriorSpecification(distribution=log_normal(0, 1)),
+    "k_beta_m_2": PriorSpecification(distribution=log_normal(2, 1)),
+    "k_alpha_h_1": PriorSpecification(distribution=log_normal(-3, 1)),
+    "k_alpha_h_2": PriorSpecification(distribution=log_normal(2, 1)),
+    "k_beta_h_1": PriorSpecification(distribution=log_normal(2, 1)),
+    "k_beta_h_2": PriorSpecification(distribution=log_normal(2, 1)),
+    "g_bar_Na": PriorSpecification(distribution=log_normal(2, 1)),
+    "σ": PriorSpecification(distribution=log_normal(0, 1)),
 }
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
 def alpha_m(v, params):

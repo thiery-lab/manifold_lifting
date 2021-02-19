@@ -10,6 +10,7 @@ import jax.api as api
 import jax.scipy.linalg as sla
 import mlift
 from mlift.distributions import half_normal, inverse_gamma
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -17,23 +18,20 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "α": common.PriorSpecification(distribution=half_normal(3)),
-    "λ": common.PriorSpecification(
+    "α": PriorSpecification(distribution=half_normal(3)),
+    "λ": PriorSpecification(
         shape=lambda data: data["x"].shape[1], distribution=inverse_gamma(4, 10)
     ),
-    "σ": common.PriorSpecification(distribution=half_normal(1)),
+    "σ": PriorSpecification(distribution=half_normal(1)),
 }
 
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
-def squared_exponential_covariance(x, params):
+def squared_exp_covar(x, params):
     def sq_exp(x1, x2):
         return np.exp(-(((x1 - x2) / params["λ"]) ** 2).sum() / 2)
 
@@ -43,9 +41,7 @@ def squared_exponential_covariance(x, params):
 def covar_func(u, data):
     dim_y = data["y_obs"].shape[0]
     params = generate_params(u, data)
-    return squared_exponential_covariance(data["x"], params) + params[
-        "σ"
-    ] ** 2 * np.identity(dim_y)
+    return squared_exp_covar(data["x"], params) + params["σ"] ** 2 * np.identity(dim_y)
 
 
 def extended_prior_neg_log_dens(q, data):

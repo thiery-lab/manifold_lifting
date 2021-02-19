@@ -13,6 +13,7 @@ import jax.lax as lax
 import jax.api as api
 import mlift
 from mlift.distributions import normal, uniform, half_cauchy
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -20,19 +21,16 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "α": common.PriorSpecification(distribution=normal(0, 10)),
-    "β": common.PriorSpecification(
+    "α": PriorSpecification(distribution=normal(0, 10)),
+    "β": PriorSpecification(
         shape=lambda data: data["max_lag"], distribution=normal(0, 10)
     ),
-    "σ": common.PriorSpecification(distribution=half_cauchy(2.5)),
+    "σ": PriorSpecification(distribution=half_cauchy(2.5)),
 }
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
 def generate_from_model(u, data):
@@ -55,9 +53,10 @@ def extended_prior_neg_log_dens(q, data):
 
 def posterior_neg_log_dens(u, data):
     params, x = generate_from_model(u, data)
-    return prior_neg_log_dens(u, data) + (
-        ((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])
-    ).sum()
+    return (
+        prior_neg_log_dens(u, data)
+        + (((data["y_obs"] - x) / params["σ"]) ** 2 / 2 + np.log(params["σ"])).sum()
+    )
 
 
 def sample_initial_states(rng, args, data):

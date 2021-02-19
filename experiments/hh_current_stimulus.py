@@ -8,6 +8,7 @@ import jax.lax as lax
 import jax.api as api
 import mlift
 from mlift.distributions import normal, log_normal
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -15,21 +16,18 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "k_tau_p_1": common.PriorSpecification(distribution=log_normal(8, 1)),
-    "g_bar_Na": common.PriorSpecification(distribution=log_normal(4, 1)),
-    "g_bar_K": common.PriorSpecification(distribution=log_normal(2, 1)),
-    "g_bar_M": common.PriorSpecification(distribution=log_normal(-3, 1)),
-    "g_leak": common.PriorSpecification(distribution=log_normal(-3, 1)),
-    "v_t": common.PriorSpecification(distribution=normal(-60, 10)),
-    "σ": common.PriorSpecification(distribution=log_normal(0, 1)),
+    "k_tau_p_1": PriorSpecification(distribution=log_normal(8, 1)),
+    "g_bar_Na": PriorSpecification(distribution=log_normal(4, 1)),
+    "g_bar_K": PriorSpecification(distribution=log_normal(2, 1)),
+    "g_bar_M": PriorSpecification(distribution=log_normal(-3, 1)),
+    "g_leak": PriorSpecification(distribution=log_normal(-3, 1)),
+    "v_t": PriorSpecification(distribution=normal(-60, 10)),
+    "σ": PriorSpecification(distribution=log_normal(0, 1)),
 }
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
 def x_over_expm1_x(x):
@@ -213,14 +211,6 @@ def posterior_neg_log_dens(u, data):
     )
 
 
-def calculate_spike_times(y, data, smoothing_window=10):
-    v = onp.convolve(y, onp.ones(smoothing_window) / smoothing_window, "same")
-    v = onp.clip(v, -10, None)
-    v[onp.where(onp.diff(v) < 0)] = -10
-    spike_times = data["t_obs"][onp.where(onp.diff(v) < 0)]
-    return spike_times
-
-
 def sample_initial_states(rng, args, data):
     """Sample initial state using approximate Bayesian computation reject type approach.
 
@@ -245,7 +235,7 @@ def sample_initial_states(rng, args, data):
             peak_times.shape[0] == peak_times_obs.shape[0]
             and abs(peak_times - peak_times_obs).max()
             < args.init_peak_time_diff_threshold
-            and (n**2).mean() < 100
+            and (n ** 2).mean() < 100
         ):
             num_tries += 1
             continue

@@ -13,6 +13,7 @@ import jax.lax as lax
 import jax.api as api
 import mlift
 from mlift.distributions import normal, uniform, half_cauchy
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -20,18 +21,15 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "μ": common.PriorSpecification(distribution=normal(0, 10)),
-    "ϕ": common.PriorSpecification(distribution=uniform(-1, 1)),
-    "θ": common.PriorSpecification(distribution=uniform(-1, 1)),
-    "σ": common.PriorSpecification(distribution=half_cauchy(2.5)),
+    "μ": PriorSpecification(distribution=normal(0, 10)),
+    "ϕ": PriorSpecification(distribution=uniform(-1, 1)),
+    "θ": PriorSpecification(distribution=uniform(-1, 1)),
+    "σ": PriorSpecification(distribution=half_cauchy(2.5)),
 }
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
 def generate_from_model(u, data):

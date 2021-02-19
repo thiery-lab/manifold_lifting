@@ -10,6 +10,7 @@ import jax.api as api
 import mlift
 from mlift.distributions import log_normal, normal
 from mlift.ode import integrate_ode_rk4
+from mlift.prior import PriorSpecification, set_up_prior
 from experiments import common
 
 jax.config.update("jax_enable_x64", True)
@@ -17,22 +18,19 @@ jax.config.update("jax_platform_name", "cpu")
 
 
 prior_specifications = {
-    "α": common.PriorSpecification(distribution=log_normal(0, 1)),
-    "β": common.PriorSpecification(distribution=log_normal(0, 1)),
-    "γ": common.PriorSpecification(distribution=log_normal(0, 1)),
-    "δ": common.PriorSpecification(distribution=log_normal(-1, 1)),
-    "ϵ": common.PriorSpecification(distribution=log_normal(-3, 1)),
-    "ζ": common.PriorSpecification(distribution=log_normal(-2, 1)),
-    "σ": common.PriorSpecification(distribution=log_normal(-1, 1)),
-    "x_init": common.PriorSpecification(shape=(2,), distribution=normal(0, 1)),
+    "α": PriorSpecification(distribution=log_normal(0, 1)),
+    "β": PriorSpecification(distribution=log_normal(0, 1)),
+    "γ": PriorSpecification(distribution=log_normal(0, 1)),
+    "δ": PriorSpecification(distribution=log_normal(-1, 1)),
+    "ϵ": PriorSpecification(distribution=log_normal(-3, 1)),
+    "ζ": PriorSpecification(distribution=log_normal(-2, 1)),
+    "σ": PriorSpecification(distribution=log_normal(-1, 1)),
+    "x_init": PriorSpecification(shape=(2,), distribution=normal(0, 1)),
 }
 
-(
-    compute_dim_u,
-    generate_params,
-    prior_neg_log_dens,
-    sample_from_prior,
-) = common.set_up_prior(prior_specifications)
+compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior = set_up_prior(
+    prior_specifications
+)
 
 
 def dx_dt(x, t, params):
