@@ -208,7 +208,7 @@ if __name__ == "__main__":
         data=data,
         dim_u=dim_u,
         rng=rng,
-        experiment_name="sv",
+        experiment_name="stochastic_volatility",
         var_names=list(prior_specifications.keys()),
         var_trace_func=trace_func,
         posterior_neg_log_dens=posterior_neg_log_dens,
