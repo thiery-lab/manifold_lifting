@@ -36,10 +36,10 @@ def set_up_argparser_with_standard_arguments(description):
         choices=("unbounded", "normal"),
         default="unbounded",
         help=(
-            "Parameterization to use for prior distribution. Default is to transform "
-            "all parameters in terms of unbounded variables. Alternatively parameters "
+            "Parameterization to use for prior distribution. Default is to define all "
+            "parameters as transforms of unbounded variables. Alternatively parameters "
             "may be expressed as transforms of standard normal variates where possible."
-        )
+        ),
     )
     parser.add_argument(
         "--seed", type=int, default=202101, help="Seed for random number generator"
@@ -79,18 +79,22 @@ def set_up_argparser_with_standard_arguments(description):
         choices=("diagonal", "dense"),
         default="diagonal",
         help=(
-            "Metric type to adaptively tune during warm-up stage when using HMC algorithm. "
-            "If 'diagonal' a diagonal metric matrix representation is used with diagonal "
-            "entries set to reciprocals of estimates of the marginal posterior variances. "
-            "If 'dense' a dense metric matrix representation is used corresponding to the "
-            "inverse of an estimate of the posterior covariance matrix."
+            "Metric type to adaptively tune during warm-up stage when using HMC "
+            "algorithm. If 'diagonal' a diagonal metric matrix representation is used "
+            "with diagonal entries set to reciprocals of estimates of the marginal "
+            "posterior variances. If 'dense' a dense metric matrix representation is "
+            "used corresponding to the inverse of an estimate of the posterior "
+            "covariance matrix."
         ),
     )
     parser.add_argument(
         "--projection-solver",
         choices=("newton", "quasi-newton"),
         default="newton",
-        help="Iterative method to solve projection onto manifold when using CHMC algorithm.",
+        help=(
+            "Iterative method to solve projection onto manifold when using CHMC "
+            "algorithm."
+        ),
     )
     parser.add_argument(
         "--projection-solver-max-iters",

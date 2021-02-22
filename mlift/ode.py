@@ -67,7 +67,7 @@ def integrate_ode_adaptive(
         params (Dict): Dictionary of model parameters to pass to `dx_dt` function.
         rtol (float): Relative local error tolerance for solver.
         atol (float): Absolute local error tolerance for solver.
-        max_steps (int): Kaximum number of steps to take between each time point.
+        max_steps (int): Maximum number of steps to take between each time point.
 
     Returns:
         ArrayLike: Sequence of states computed at times in `t_seq`.
