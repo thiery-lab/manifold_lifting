@@ -114,7 +114,6 @@ if __name__ == "__main__":
     final_states, traces, stats, summary_dict, sampler = utils.run_experiment(
         args=args,
         data=data,
-        dim_u=dim_u,
         rng=rng,
         experiment_name="gp_regression",
         dir_prefix=f"{args.dataset}_data_subsampled_by_{args.data_subsample}",

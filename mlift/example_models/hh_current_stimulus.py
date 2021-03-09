@@ -304,7 +304,6 @@ if __name__ == "__main__":
     final_states, traces, stats, summary_dict, sampler = utils.run_experiment(
         args=args,
         data=data,
-        dim_u=dim_u,
         rng=rng,
         experiment_name="hh_current_stimulus",
         dir_prefix=f"σ_{args.obs_noise_std:.0e}",

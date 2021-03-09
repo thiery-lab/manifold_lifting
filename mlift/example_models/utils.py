@@ -258,9 +258,9 @@ def set_up_mici_objects(
     args,
     rng,
     constrained_system_class,
-    neg_log_dens_hmc,
-    grad_neg_log_dens_hmc,
     constrained_system_kwargs,
+    euclidean_system_class,
+    euclidean_system_kwargs,
 ):
     if args.algorithm == "chmc":
         system, integrator, adapters, monitor_stats = _set_up_chmc_mici_objects(
@@ -268,7 +268,7 @@ def set_up_mici_objects(
         )
     else:
         system, integrator, adapters, monitor_stats = _set_up_hmc_mici_objects(
-            args, neg_log_dens_hmc, grad_neg_log_dens_hmc
+            args, euclidean_system_class, euclidean_system_kwargs
         )
     step_size_adapter = mici.adapters.DualAveragingStepSizeAdapter(
         adapt_stat_target=args.step_size_adaptation_target,
@@ -283,11 +283,20 @@ def _set_up_chmc_mici_objects(
     args, constrained_system_class, constrained_system_kwargs
 ):
     system = constrained_system_class(**constrained_system_kwargs)
-    projection_solver = (
-        mlift.jitted_solve_projection_onto_manifold_newton
-        if args.projection_solver == "newton"
-        else mlift.jitted_solve_projection_onto_manifold_quasi_newton
-    )
+    if issubclass(
+        constrained_system_class, mici.systems.ConstrainedEuclideanMetricSystem
+    ):
+        projection_solver = (
+            mici.solvers.solve_projection_onto_manifold_newton
+            if args.projection_solver == "newton"
+            else mici.solvers.solve_projection_onto_manifold_quasi_newton
+        )
+    else:
+        projection_solver = (
+            mlift.jitted_solve_projection_onto_manifold_newton
+            if args.projection_solver == "newton"
+            else mlift.jitted_solve_projection_onto_manifold_quasi_newton
+        )
     projection_solver_kwargs = {
         "constraint_tol": args.projection_solver_warm_up_constraint_tol,
         "position_tol": args.projection_solver_warm_up_position_tol,
@@ -315,10 +324,8 @@ def _set_up_chmc_mici_objects(
     return system, integrator, adapters, monitor_stats
 
 
-def _set_up_hmc_mici_objects(args, neg_log_dens_hmc, grad_neg_log_dens_hmc):
-    system = mici.systems.EuclideanMetricSystem(
-        neg_log_dens=neg_log_dens_hmc, grad_neg_log_dens=grad_neg_log_dens_hmc
-    )
+def _set_up_hmc_mici_objects(args, euclidean_system_class, euclidean_system_kwargs):
+    system = euclidean_system_class(**euclidean_system_kwargs)
     integrator = mici.integrators.LeapfrogIntegrator(system)
     metric_adapter = (
         mici.adapters.OnlineVarianceMetricAdapter()
@@ -400,7 +407,7 @@ def calculate_peak_times(x_seq, t_seq, window_width, threshold):
     return t_seq[np.where(np.diff(v_seq) < 0)]
 
 
-def precompile_jax_functions(q, args, system):
+def precompile_system_jax_functions(q, args, system):
     start_time = time.time()
     if args.algorithm == "chmc":
         system.precompile_jax_functions(q)
@@ -496,17 +503,19 @@ def compute_and_save_summary(output_dir, var_names, traces, **kwargs):
 def run_experiment(
     args,
     data,
-    dim_u,
     rng,
     experiment_name,
     var_names,
     var_trace_func,
-    posterior_neg_log_dens,
+    sample_initial_states,
     constrained_system_class,
     constrained_system_kwargs,
-    sample_initial_states,
+    euclidean_system_class=mici.systems.EuclideanMetricSystem,
+    euclidean_system_kwargs=None,
+    posterior_neg_log_dens=None,
     extended_prior_neg_log_dens=None,
     dir_prefix=None,
+    precompile_jax_functions=True,
 ):
 
     print(
@@ -526,12 +535,22 @@ def run_experiment(
     data["parametrization"] = args.prior_parametrization
 
     # Set up Mici objects
-    (
-        neg_log_dens_hmc,
-        grad_neg_log_dens_hmc,
-    ) = mlift.construct_mici_system_neg_log_dens_functions(
-        api.partial(posterior_neg_log_dens, data=data)
-    )
+    if posterior_neg_log_dens is not None:
+        (
+            neg_log_dens_hmc,
+            grad_neg_log_dens_hmc,
+        ) = mlift.construct_mici_system_neg_log_dens_functions(
+            api.partial(posterior_neg_log_dens, data=data)
+        )
+        euclidean_system_kwargs = {
+            "neg_log_dens": neg_log_dens_hmc,
+            "grad_neg_log_dens": grad_neg_log_dens_hmc,
+        }
+    elif euclidean_system_kwargs is None:
+        raise ValueError(
+            "One of either posterior_neg_log_dens or euclidean_system_kwargs must "
+            "not be None "
+        )
 
     if extended_prior_neg_log_dens is not None:
         (
@@ -547,18 +566,21 @@ def run_experiment(
         args,
         rng,
         constrained_system_class,
-        neg_log_dens_hmc,
-        grad_neg_log_dens_hmc,
         constrained_system_kwargs,
+        euclidean_system_class,
+        euclidean_system_kwargs,
     )
 
     def hamiltonian_and_call_count_trace_func(state):
-        h = system.h(state)
         call_counts = {
             name.split(".")[-1] + "_calls": val
             for (name, _), val in state._call_counts.items()
         }
-        return {**call_counts, "hamiltonian": h}
+        return {
+            **call_counts,
+            "hamiltonian": system.h(state),
+            "neg_log_dens": system.neg_log_dens(state),
+        }
 
     trace_funcs = [var_trace_func, hamiltonian_and_call_count_trace_func]
 
@@ -573,9 +595,12 @@ def run_experiment(
 
     # Precompile JAX functions to avoid compilation time appearing in chain run times
 
-    print("Pre-compiling JAX functions ...")
-    compile_time = precompile_jax_functions(init_states[0].pos, args, system)
-    print(f"Total compile time: {compile_time:.0f} seconds")
+    if precompile_jax_functions:
+        print("Pre-compiling JAX functions ...")
+        compile_time = precompile_system_jax_functions(init_states[0].pos, args, system)
+        print(f"Total compile time: {compile_time:.0f} seconds")
+    else:
+        compile_time = 0
 
     # Ignore NumPy floating point overflow warnings
     # Prevents warning messages being produced while progress bars are being printed
@@ -601,7 +626,7 @@ def run_experiment(
 
     # Compute, display and save summary of statistics of traced chain variables
 
-    summary_vars = var_names + ["hamiltonian"]
+    summary_vars = var_names + ["neg_log_dens", "hamiltonian"]
     summary, summary_dict = compute_and_save_summary(
         output_dir,
         summary_vars,
