@@ -271,7 +271,7 @@ def construct_forward_func_and_derivatives(
     k_dAx_dz = fenics.derivative(A(k, x, coefficients={}), z)
 
     # Create homogenized boundary conditions for solving in adjoint pass
-    homogenized_boundary_conditions = define_boundary_conditions()
+    homogenized_boundary_conditions = define_boundary_conditions(x_func_space)
     for boundary_condition in homogenized_boundary_conditions:
         boundary_condition.homogenize()
 
@@ -391,7 +391,7 @@ def construct_forward_func_and_derivatives(
     )
 
 
-def construct_constrained_system(
+def construct_constrained_system_kwargs(
     y_obs,
     forward_func,
     jacob_forward_func,
@@ -440,7 +440,7 @@ def construct_constrained_system(
     def grad_neg_log_dens(q):
         return q, (q ** 2).sum() / 2
 
-    return mici.systems.DenseConstrainedEuclideanMetricSystem(
+    return dict(
         constr=constr,
         jacob_constr=jacob_constr,
         mhp_constr=mhp_constr,
@@ -450,7 +450,7 @@ def construct_constrained_system(
     )
 
 
-def construct_euclidean_system(
+def construct_euclidean_system_kwargs(
     y_obs, forward_func, vjp_forward_func, dim_y, dim_z, generate_σ, grad_generate_σ
 ):
     def neg_log_dens(q):
@@ -475,7 +475,5 @@ def construct_euclidean_system(
             sum_residual_over_σ_sq / 2 + dim_y * np.log(σ) + (q ** 2).sum() / 2,
         )
 
-    return mici.systems.EuclideanMetricSystem(
-        neg_log_dens=neg_log_dens, grad_neg_log_dens=grad_neg_log_dens
-    )
+    return dict(neg_log_dens=neg_log_dens, grad_neg_log_dens=grad_neg_log_dens)
 
