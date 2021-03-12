@@ -63,6 +63,12 @@ def set_up_argparser_with_standard_arguments(description):
         help="Number of chain iterations in main sampling stage",
     )
     parser.add_argument(
+        "--max-tree-depth",
+        type=int,
+        default=10,
+        help="Maximum depth of binary trajectory tree in each dynamic HMC iteration",
+    )
+    parser.add_argument(
         "--step-size-adaptation-target",
         type=float,
         default=0.8,
@@ -71,7 +77,7 @@ def set_up_argparser_with_standard_arguments(description):
     parser.add_argument(
         "--step-size-reg-coefficient",
         type=float,
-        default=0.1,
+        default=0.05,
         help="Regularisation coefficient for step size adaptation",
     )
     parser.add_argument(
@@ -130,13 +136,13 @@ def set_up_argparser_with_standard_arguments(description):
 
 
 def set_up_output_directory(args, experiment_name, dir_prefix=None):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     algorithm_subtype = (
         f"{args.metric_type}_metric"
         if args.algorithm == "hmc"
         else f"{args.projection_solver}_solver"
     )
-    dir_name = f"{args.algorithm}_{algorithm_subtype}_{timestamp}"
+    dir_name = f"{args.algorithm}_{algorithm_subtype}_seed_{args.seed}_{timestamp}"
     if dir_prefix is not None:
         dir_name = f"{dir_prefix}_{dir_name}"
     output_dir = os.path.join(args.output_root_dir, experiment_name, dir_name)
@@ -275,7 +281,9 @@ def set_up_mici_objects(
         log_step_size_reg_coefficient=args.step_size_reg_coefficient,
     )
     adapters.append(step_size_adapter)
-    sampler = mici.samplers.DynamicMultinomialHMC(system, integrator, rng)
+    sampler = mici.samplers.DynamicMultinomialHMC(
+        system, integrator, rng, max_tree_depth=args.max_tree_depth
+    )
     return system, integrator, sampler, adapters, monitor_stats
 
 
