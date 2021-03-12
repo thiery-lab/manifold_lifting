@@ -1,6 +1,8 @@
 """Inference of coefficient field in Poisson equation (elliptic PDE)."""
 
 import os
+import warnings
+import logging
 import numpy as np
 import fenics
 import ufl
@@ -122,6 +124,12 @@ if __name__ == "__main__":
     # Disable fenics logging to prevent interference with progress meter display
 
     fenics.set_log_active(False)
+    logging.getLogger("UFL").setLevel(logging.WARNING)
+    logging.getLogger("FFC").setLevel(logging.WARNING)
+
+    # Disable runtime warnings to prevent interference with progress meter display
+
+    warnings.filterwarnings("ignore", category=RuntimeWarning) 
 
     # Run experiment
 
@@ -152,6 +160,7 @@ if __name__ == "__main__":
         data=data,
         rng=rng,
         experiment_name="poisson",
+        dir_prefix=f"σ_{args.obs_noise_std:.0e}",
         var_names=["σ", "z_mean", "z_std"],
         var_trace_func=trace_func,
         constrained_system_class=mici.systems.DenseConstrainedEuclideanMetricSystem,
