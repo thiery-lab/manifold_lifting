@@ -269,6 +269,62 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
             )
             return q, mu / dt, i, norm_delta_q, error
 
+        def newton_projection_with_line_search(
+            q,
+            jacob_constr_blocks_prev,
+            dt,
+            constraint_tol,
+            position_tol,
+            divergence_tol,
+            max_iters,
+            max_line_search_iters,
+            norm,
+        ):
+            """Newton method with line search to solve projection onto manifold."""
+
+            def body_func(loop_state):
+                q, _, _, i, num_constr_calls = loop_state
+                jac_blocks, c = jacob_constr_blocks(q)
+                error = norm(c)
+                search_direction = -rmult_by_jacob_constr(
+                    *jacob_constr_blocks_prev,
+                    lmult_by_inv_jacob_product(
+                        *jac_blocks, *jacob_constr_blocks_prev, c
+                    ),
+                )
+
+                def inner_body_func(inner_loop_state):
+                    step_size, _, _, j = inner_loop_state
+                    new_q = q + step_size * search_direction
+                    new_error = norm(constr(new_q))
+                    return step_size * 0.5, new_q, new_error, j + 1
+
+                def inner_cond_func(inner_loop_state):
+                    _, _, new_error, j = inner_loop_state
+                    return np.logical_and(j < max_line_search_iters, new_error > error)
+
+
+                (step_size, new_q, new_error, j) = inner_body_func((1., None, None, 0))
+                (_, new_q, new_error, j) = lax.while_loop(
+                    inner_cond_func, inner_body_func, (step_size, new_q, new_error, j)
+                )
+                return new_q, norm(new_q - q), new_error, i + 1, num_constr_calls + j
+
+            def cond_func(loop_state):
+                _, norm_delta_q, error, i, _ = loop_state
+                diverged = np.logical_or(error > divergence_tol, np.isnan(error))
+                converged = np.logical_and(
+                    error < constraint_tol, norm_delta_q < position_tol
+                )
+                return np.logical_not(
+                    np.logical_or((i >= max_iters), np.logical_or(diverged, converged))
+                )
+
+            new_q, norm_delta_q, error, i, num_constr_calls = lax.while_loop(
+                cond_func, body_func, (q, np.inf, -1., 0, 0)
+            )
+            return new_q, (q - new_q) / dt, i, norm_delta_q, error, num_constr_calls
+
         self._constr = api.jit(constr)
         self._jacob_constr_blocks = api.jit(jacob_constr_blocks)
         self._decompose_gram = api.jit(decompose_gram)
@@ -283,6 +339,8 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
         self._normal_space_component = api.jit(normal_space_component)
         self._quasi_newton_projection = api.jit(quasi_newton_projection, 8)
         self._newton_projection = api.jit(newton_projection, 7)
+        self._newton_projection_with_line_search = api.jit(
+            newton_projection_with_line_search, 8)
         super().__init__(neg_log_dens=neg_log_dens, grad_neg_log_dens=grad_neg_log_dens)
 
     def precompile_jax_functions(self, q, solver_norm=maximum_norm):
@@ -302,6 +360,8 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
             q, jac_blocks, gram_components, 1., 0.1, 0.1, 1., 10, solver_norm
         )
         self._newton_projection(q, jac_blocks, 1., 0.1, 0.1, 1., 10, solver_norm)
+        self._newton_projection_with_line_search(
+            q, jac_blocks, 1., 0.1, 0.1, 1., 10, 10, solver_norm)
 
     @cache_in_state("pos")
     def constr(self, state):
