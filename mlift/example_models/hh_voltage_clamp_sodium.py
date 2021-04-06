@@ -28,7 +28,7 @@ prior_specifications = {
     "k_alpha_h_1": PriorSpecification(distribution=log_normal(-3, 1)),
     "k_alpha_h_2": PriorSpecification(distribution=log_normal(2, 1)),
     "k_beta_h_1": PriorSpecification(distribution=log_normal(2, 1)),
-    "k_beta_h_2": PriorSpecification(distribution=log_normal(2, 1)),
+    "k_beta_h_2": PriorSpecification(distribution=log_normal(1, 1)),
     "g_bar_Na": PriorSpecification(distribution=log_normal(2, 1)),
     "σ": PriorSpecification(distribution=log_normal(0, 1)),
 }
