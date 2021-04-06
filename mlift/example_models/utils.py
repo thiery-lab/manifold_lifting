@@ -438,13 +438,13 @@ def sample_chains(
     args, sampler, init_states, trace_funcs, adapters, output_dir, monitor_stats
 ):
     start_time = time.time()
-    final_states, traces, stats = sampler.sample_chains_with_adaptive_warm_up(
+    final_states, traces, stats = sampler.sample_chains(
         args.num_warm_up_iter,
         args.num_main_iter,
         init_states,
         trace_funcs=trace_funcs,
         adapters=adapters,
-        memmap_enabled=True,
+        force_memmap=True,
         memmap_path=output_dir,
         monitor_stats=monitor_stats,
         max_threads_per_process=1,
@@ -587,18 +587,13 @@ def run_experiment(
         euclidean_system_kwargs,
     )
 
-    def hamiltonian_and_call_count_trace_func(state):
-        call_counts = {
-            name.split(".")[-1] + "_calls": val
-            for (name, _), val in state._call_counts.items()
-        }
+    def hamiltonian_and_neg_log_dens_trace_func(state):
         return {
-            **call_counts,
             "hamiltonian": system.h(state),
             "neg_log_dens": system.neg_log_dens(state),
         }
 
-    trace_funcs = [var_trace_func, hamiltonian_and_call_count_trace_func]
+    trace_funcs = [var_trace_func, hamiltonian_and_neg_log_dens_trace_func]
 
     # Initialise chain states
 
