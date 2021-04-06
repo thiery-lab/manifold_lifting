@@ -112,7 +112,7 @@ def set_up_argparser_with_standard_arguments(description):
         "--projection-solver-warm-up-constraint-tol",
         type=float,
         default=1e-6,
-        help="Warm-up stage tolerance for constraint function norm in projection solver",
+        help="Warm-up stage tolerance for constraint norm in projection solver",
     )
     parser.add_argument(
         "--projection-solver-warm-up-position-tol",
@@ -124,7 +124,7 @@ def set_up_argparser_with_standard_arguments(description):
         "--projection-solver-main-constraint-tol",
         type=float,
         default=1e-9,
-        help="Main stage tolerance for constraint function norm in projection solver",
+        help="Main stage tolerance for constraint norm in projection solver",
     )
     parser.add_argument(
         "--projection-solver-main-position-tol",
@@ -295,11 +295,18 @@ def _set_up_chmc_mici_objects(
     if issubclass(
         constrained_system_class, mici.systems.ConstrainedEuclideanMetricSystem
     ):
-        projection_solver = (
-            mici.solvers.solve_projection_onto_manifold_newton
-            if args.projection_solver == "newton"
-            else mici.solvers.solve_projection_onto_manifold_quasi_newton
-        )
+        if args.projection_solver == "newton":
+            projection_solver = mici.solvers.solve_projection_onto_manifold_newton
+        elif args.projection_solver == "quasi-newton":
+            projection_solver = mici.solvers.solve_projection_onto_manifold_quasi_newton
+        elif args.projection_solver == "newton-line-search":
+            projection_solver = (
+                mici.solvers.solve_projection_onto_manifold_newton_with_line_search
+            )
+        else:
+            raise ValueError(
+                f"Unrecognised projection solver: {args.projection_solver}"
+            )
     else:
         if args.projection_solver == "newton":
             projection_solver = mlift.jitted_solve_projection_onto_manifold_newton
