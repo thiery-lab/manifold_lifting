@@ -1,7 +1,9 @@
 import numpy as onp
 import jax.numpy as np
 import jax.lax as lax
+from jax import vmap
 from jax.experimental.ode import odeint
+from mlift.math import expm
 
 
 def integrate_ode_rk4(dx_dt, x_init, t_seq, params, dt):
@@ -73,3 +75,48 @@ def integrate_ode_adaptive(
         ArrayLike: Sequence of states computed at times in `t_seq`.
     """
     return odeint(dx_dt, x_init, t_seq, params, rtol=rtol, atol=atol, mxstep=max_steps)
+
+
+def integrate_ode_expm(a, x_init, t_seq, b=None):
+    """Integrate linear ordinary differential equation system using matrix exponential.
+
+    For a linear ordinary differential equation system
+
+        dx/dt = a @ x + b
+
+    where `a` is a matrix and `b` is a vector (both of which are independent of time
+    `t`), the solution to the initial value problem with `x(0) = x_init` can be written
+    using the matrix exponential function `expm` as
+
+        x(t) = -inv(A) @ b + expm(a * t) @ (x_init + inv(A) @ b)
+
+    This function returns the solution of a linear ODE system given the Jacobian matrix
+    of the time-derivative `a`,  constant vector `b` (if present), an initial state
+    `x_init` and a sequence of time points `t_seq`.
+
+    Args:
+        a (ArrayLike): Jacobian of time-derivative of the state `x` with respect to the
+            state `x` as a 2D array.
+        x_init (ArrayLike): Initial state of system at time `t_seq[0]`.
+        t_seq (ArrayLike): Sequence of time points to compute solution at. Must be
+            static / known at compile time.
+        b (Optional[ArrayLike]): Constant vector in time-derivative of the state `x`. If
+            set to `None` assumed to be zero.
+
+    Returns:
+        ArrayLike: Sequence of states computed at times in `t_seq`.
+    """
+
+    if b is not None:
+        a_inv_b = np.linalg.solve(a, b)
+
+        def solution_func(t):
+            return -a_inv_b + expm(a * t) @ (x_init + a_inv_b)
+
+    else:
+
+        def solution_func(t):
+            return expm(a * t) @ x_init
+
+    x_seq = vmap(solution_func)(t_seq[1:] - t_seq[0])
+    return np.concatenate((x_init[None], x_seq))
