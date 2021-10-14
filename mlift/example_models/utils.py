@@ -280,7 +280,6 @@ def set_up_mici_objects(
     step_size_adapter = mici.adapters.DualAveragingStepSizeAdapter(
         adapt_stat_target=args.step_size_adaptation_target,
         log_step_size_reg_coefficient=args.step_size_reg_coefficient,
-        log_step_size_reducer=mici.adapters.min_log_step_size_reducer,
     )
     adapters.append(step_size_adapter)
     sampler = mici.samplers.DynamicMultinomialHMC(
