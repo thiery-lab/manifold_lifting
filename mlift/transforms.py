@@ -99,7 +99,7 @@ def standard_normal_to_uniform(lower, upper):
 
     return ElementwiseMonotonicTransform(
         forward=lambda n: lower + ndtr(n) * (upper - lower),
-        backward=lambda u: ndtri(u - lower / (upper - lower)),
+        backward=lambda u: ndtri((u - lower) / (upper - lower)),
         domain=reals,
         image=RealInterval(lower, upper),
     )
