@@ -1,3 +1,4 @@
+from functools import partial
 from mici.systems import System
 from mici.matrices import IdentityMatrix
 from mici.states import cache_in_state, cache_in_state_with_aux
@@ -7,11 +8,10 @@ from jax.config import config
 config.update("jax_enable_x64", True)
 config.update("jax_platform_name", "cpu")
 
-import jax.api as api
-import jax.lax as lax
-import jax.numpy as np
+import jax
+from jax import lax, numpy as np
 import jax.scipy.linalg as sla
-from jax.lax.linalg import triangular_solve, cholesky
+from jax.lax.linalg import cholesky
 import numpy as onp
 
 from mlift.linalg import (
@@ -74,8 +74,8 @@ def construct_mici_system_neg_log_dens_functions(jax_neg_log_dens):
         the target density with respect o the input latent vector, and `val` its value.
     """
 
-    jitted_neg_log_dens = api.jit(jax_neg_log_dens)
-    jitted_val_and_grad_neg_log_dens = api.jit(api.value_and_grad(jax_neg_log_dens))
+    jitted_neg_log_dens = jax.jit(jax_neg_log_dens)
+    jitted_val_and_grad_neg_log_dens = jax.jit(jax.value_and_grad(jax_neg_log_dens))
 
     def neg_log_dens(q):
         return onp.asarray(jitted_neg_log_dens(q))
@@ -139,7 +139,7 @@ def construct_state_space_model_generators(
 
     def generate_y(u, v, n, data):
         params, x = generate_from_model(u, v, data)
-        y = api.vmap(observation_func, (None, 0, 0))(params, n, x, data)
+        y = jax.vmap(observation_func, (None, 0, 0))(params, n, x, data)
         return y
 
     return generate_from_model, generate_y
@@ -325,22 +325,25 @@ class _AbstractDifferentiableGenerativeModelSystem(System):
             )
             return new_q, (q - new_q) / dt, i, norm_delta_q, error, num_constr_calls
 
-        self._constr = api.jit(constr)
-        self._jacob_constr_blocks = api.jit(jacob_constr_blocks)
-        self._decompose_gram = api.jit(decompose_gram)
-        self._log_det_sqrt_gram = api.jit(log_det_sqrt_gram)
-        self._val_and_grad_log_det_sqrt_gram = api.jit(
-            api.value_and_grad(log_det_sqrt_gram, has_aux=True)
+        self._constr = jax.jit(constr)
+        self._jacob_constr_blocks = jax.jit(jacob_constr_blocks)
+        self._decompose_gram = jax.jit(decompose_gram)
+        self._log_det_sqrt_gram = jax.jit(log_det_sqrt_gram)
+        self._val_and_grad_log_det_sqrt_gram = jax.jit(
+            jax.value_and_grad(log_det_sqrt_gram, has_aux=True)
         )
-        self._lmult_by_jacob_constr = api.jit(lmult_by_jacob_constr)
-        self._rmult_by_jacob_constr = api.jit(rmult_by_jacob_constr)
-        self._lmult_by_pinv_jacob_constr = api.jit(lmult_by_pinv_jacob_constr)
-        self._lmult_by_inv_jacob_product = api.jit(lmult_by_inv_jacob_product)
-        self._normal_space_component = api.jit(normal_space_component)
-        self._quasi_newton_projection = api.jit(quasi_newton_projection, 8)
-        self._newton_projection = api.jit(newton_projection, 7)
-        self._newton_projection_with_line_search = api.jit(
-            newton_projection_with_line_search, 8)
+        self._lmult_by_jacob_constr = jax.jit(lmult_by_jacob_constr)
+        self._rmult_by_jacob_constr = jax.jit(rmult_by_jacob_constr)
+        self._lmult_by_pinv_jacob_constr = jax.jit(lmult_by_pinv_jacob_constr)
+        self._lmult_by_inv_jacob_product = jax.jit(lmult_by_inv_jacob_product)
+        self._normal_space_component = jax.jit(normal_space_component)
+        self._quasi_newton_projection = jax.jit(
+            quasi_newton_projection, static_argnames="norm"
+        )
+        self._newton_projection = jax.jit(newton_projection, static_argnames="norm")
+        self._newton_projection_with_line_search = jax.jit(
+            newton_projection_with_line_search, static_argnames="norm"
+        )
         super().__init__(neg_log_dens=neg_log_dens, grad_neg_log_dens=grad_neg_log_dens)
 
     def precompile_jax_functions(self, q, solver_norm=maximum_norm):
@@ -553,10 +556,10 @@ class IndependentAdditiveNoiseModelSystem(_AbstractDifferentiableGenerativeModel
         def jacob_constr_blocks(q):
             u, n = q[:dim_u], q[dim_u:]
             if dim_u <= dim_y:
-                dy_du = api.jacfwd(generate_y)(u, n, data)
+                dy_du = jax.jacfwd(generate_y)(u, n, data)
             else:
-                dy_du = api.jacrev(generate_y)(u, n, data)
-            y, dy_dn = api.jvp(
+                dy_du = jax.jacrev(generate_y)(u, n, data)
+            y, dy_dn = jax.jvp(
                 lambda n: generate_y(u, n, data), (n,), (np.ones(dim_y),)
             )
             return (dy_du, dy_dn), y - y_obs
@@ -680,13 +683,13 @@ class HierarchicalLatentVariableModelSystem(
         def jacob_constr_blocks(q):
             u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
             if dim_u <= dim_y:
-                dy_du = api.jacfwd(generate_y)(u, v, n, data)
+                dy_du = jax.jacfwd(generate_y)(u, v, n, data)
             else:
-                dy_du = api.jacrev(generate_y)(u, v, n, data)
-            y, dy_dv = api.jvp(
+                dy_du = jax.jacrev(generate_y)(u, v, n, data)
+            y, dy_dv = jax.jvp(
                 lambda v: generate_y(u, v, n, data), (v,), (np.ones(dim_y),)
             )
-            y, dy_dn = api.jvp(
+            y, dy_dn = jax.jvp(
                 lambda n: generate_y(u, v, n, data), (n,), (np.ones(dim_y),)
             )
             return (dy_du, dy_dv, dy_dn), y - data["y_obs"]
@@ -845,12 +848,12 @@ class GaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSystem):
 
         def jacob_constr_blocks(q):
             u, n = q[:dim_u], q[dim_u:]
-            covar, dcovar_du = api.vmap(
-                api.partial(api.jvp, lambda u: covar_func(u, data), (u,)),
+            covar, dcovar_du = jax.vmap(
+                partial(jax.jvp, lambda u: covar_func(u, data), (u,)),
                 out_axes=(None, 1),
             )((np.identity(dim_u),))
             chol_covar = cholesky(covar)
-            dy_du = api.vmap(jvp_cholesky_mtx_mult_by_vct, (1, None, None), 1)(
+            dy_du = jax.vmap(jvp_cholesky_mtx_mult_by_vct, (1, None, None), 1)(
                 dcovar_du, chol_covar, n
             )
             return (dy_du, chol_covar), chol_covar @ n - data["y_obs"]
@@ -995,17 +998,17 @@ class GeneralGaussianProcessModelSystem(_AbstractDifferentiableGenerativeModelSy
 
         def jacob_constr_blocks(q):
             u, v, n = q[:dim_u], q[dim_u : dim_u + dim_y], q[dim_u + dim_y :]
-            covar, dcovar_du = api.vmap(
-                api.partial(api.jvp, lambda u: covar_func(u, data), (u,)),
+            covar, dcovar_du = jax.vmap(
+                partial(jax.jvp, lambda u: covar_func(u, data), (u,)),
                 out_axes=(None, 1),
             )((np.identity(dim_u),))
             chol_covar = cholesky(covar)
-            s, ds_du = api.value_and_grad(noise_scale_func)(u, data)
+            s, ds_du = jax.value_and_grad(noise_scale_func)(u, data)
             if noise_transform_func is not None:
-                t, dt_dn = api.jvp(noise_transform_func, (n,), (np.ones(dim_y),))
+                t, dt_dn = jax.jvp(noise_transform_func, (n,), (np.ones(dim_y),))
             else:
                 t, dt_dn = n, np.ones(dim_y)
-            dy_du = ds_du[None, :] * t[:, None] + api.vmap(
+            dy_du = ds_du[None, :] * t[:, None] + jax.vmap(
                 jvp_cholesky_mtx_mult_by_vct, (1, None, None), 1
             )(dcovar_du, chol_covar, v)
             return (
@@ -1118,19 +1121,19 @@ class PartiallyInvertibleStateSpaceModelSystem(
         if jacob_constr_split_blocks is None:
 
             def jacob_constr_split_blocks(u, v, n, y, data):
-                dc_du = api.jacfwd(lambda u_: constr_split(u_, v, n, y, data)[0])(u)
+                dc_du = jax.jacfwd(lambda u_: constr_split(u_, v, n, y, data)[0])(u)
                 one_vct = np.ones(dim_y)
                 alt_vct = (-1.0) ** np.arange(dim_y)
-                _, dx_dy = api.jvp(
+                _, dx_dy = jax.jvp(
                     lambda y_: constr_split(u, v, n, y_, data)[1], (y,), (one_vct,)
                 )
-                c, dc_dv = api.jvp(
+                c, dc_dv = jax.jvp(
                     lambda v_: constr_split(u, v_, n, y, data)[0], (v,), (one_vct,)
                 )
-                _, dc_dn_1 = api.jvp(
+                _, dc_dn_1 = jax.jvp(
                     lambda n_: constr_split(u, v, n_, y, data)[0], (n,), (one_vct,)
                 )
-                _, dc_dn_a = api.jvp(
+                _, dc_dn_a = jax.jvp(
                     lambda n_: constr_split(u, v, n_, y, data)[0], (n,), (alt_vct,)
                 )
                 dc_dn = (
@@ -1172,7 +1175,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
         def decompose_gram(dc_du, dc_dv, dc_dn, dx_dy):
             a = dc_dn[0][:-1] * dc_dn[1]
             b = dc_dv ** 2 + dc_dn[0] ** 2 + np.pad(dc_dn[1] ** 2, (1, 0))
-            cap_mtx = np.eye(dim_u) + dc_du.T @ api.vmap(
+            cap_mtx = np.eye(dim_u) + dc_du.T @ jax.vmap(
                 tridiagonal_solve, (None, None, None, 1), 1
             )(a, b, a, dc_du)
             chol_cap_mtx = cholesky(cap_mtx)
@@ -1200,7 +1203,7 @@ class PartiallyInvertibleStateSpaceModelSystem(
                 + np.pad(dc_dn_l[1] * dc_dn_r[1], (1, 0))
             )
             c = dc_dn_l[0][:-1] * dc_dn_r[1]
-            cap_mtx = np.eye(dim_u) + dc_du_r.T @ api.vmap(
+            cap_mtx = np.eye(dim_u) + dc_du_r.T @ jax.vmap(
                 tridiagonal_solve, (None, None, None, 1), 1
             )(a, b, c, dc_du_l)
             return tridiagonal_solve(
@@ -1305,24 +1308,24 @@ class AutoPartiallyInvertibleStateSpaceModelSystem(
             return inverse_observation_func(generate_params(u, data), n, y, data)
 
         def constr_split(u, v, n, y, data):
-            x = api.vmap(_inverse_observation_func, (None, 0, 0))(u, n, y)
+            x = jax.vmap(_inverse_observation_func, (None, 0, 0))(u, n, y)
             return (
                 np.concatenate(
                     (
                         (_generate_x_0(u, v[0]) - x[0])[None],
-                        api.vmap(_forward_func, (None, 0, 0))(u, v[1:], x[:-1]) - x[1:],
+                        jax.vmap(_forward_func, (None, 0, 0))(u, v[1:], x[:-1]) - x[1:],
                     )
                 ),
                 x,
             )
 
         def jacob_constr_split_blocks(u, v, n, y, data):
-            x, (dx_du, dx_dn, dx_dy) = api.vmap(
-                api.value_and_grad(_inverse_observation_func, (0, 1, 2)), (None, 0, 0)
+            x, (dx_du, dx_dn, dx_dy) = jax.vmap(
+                jax.value_and_grad(_inverse_observation_func, (0, 1, 2)), (None, 0, 0)
             )(u, n, y)
-            x0, (dx0_du, dx0_dv0) = api.value_and_grad(_generate_x_0, (0, 1))(u, v[0])
-            xp, (dxp_du, dxp_dvp, dxp_dxm) = api.vmap(
-                api.value_and_grad(_forward_func, (0, 1, 2)), (None, 0, 0)
+            x0, (dx0_du, dx0_dv0) = jax.value_and_grad(_generate_x_0, (0, 1))(u, v[0])
+            xp, (dxp_du, dxp_dvp, dxp_dxm) = jax.vmap(
+                jax.value_and_grad(_forward_func, (0, 1, 2)), (None, 0, 0)
             )(u, v[1:], x[:-1])
             c = np.concatenate((np.atleast_1d(x0 - x[0]), xp - x[1:]))
             dc_du = np.concatenate(

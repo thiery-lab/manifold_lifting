@@ -1,11 +1,12 @@
 """Conductance-based neuronal model subject to current stimulus."""
 
 import os
+from functools import partial
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
 import jax.lax as lax
-import jax.api as api
 from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import normal, log_normal
 from mlift.prior import PriorSpecification, set_up_prior
@@ -234,7 +235,7 @@ def sample_initial_states(
         data["y_obs"], data["t_obs"], smoothing_window_width, peak_value_threshold
     )
     num_tries = 0
-    jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
+    jitted_generate_from_model = jax.jit(partial(generate_from_model, data=data))
     while len(init_states) < num_chain and num_tries < max_init_tries:
         u = sample_from_prior(rng, data)
         params, x = jitted_generate_from_model(u)

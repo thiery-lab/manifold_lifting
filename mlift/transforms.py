@@ -1,6 +1,6 @@
 import numpy as onp
+import jax
 import jax.numpy as np
-import jax.api as api
 from jax.scipy.special import ndtr, ndtri, logit, expit
 from mlift.math import (
     standard_cauchy_cdf,
@@ -20,7 +20,7 @@ class ElementwiseMonotonicTransform:
         self.domain = domain
         self.image = image
         if val_and_grad_forward is None:
-            val_and_grad_forward = api.value_and_grad(forward)
+            val_and_grad_forward = jax.value_and_grad(forward)
         self._val_and_grad_forward = val_and_grad_forward
 
     def forward(self, u):
@@ -33,7 +33,7 @@ class ElementwiseMonotonicTransform:
         if onp.isscalar(u) or u.shape == ():
             return self._val_and_grad_forward(u)
         else:
-            x, dx_du = api.vmap(self._val_and_grad_forward)(u)
+            x, dx_du = jax.vmap(self._val_and_grad_forward)(u)
             return x, dx_du.sum()
 
     def __call__(self, u):

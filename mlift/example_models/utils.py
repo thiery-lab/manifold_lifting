@@ -8,9 +8,10 @@ import time
 import timeit
 from urllib.request import urlopen
 from urllib.error import HTTPError
+from functools import partial
 import arviz
 import numpy as np
-import jax.api as api
+import jax
 import mici
 import mlift
 
@@ -241,7 +242,7 @@ def set_up_logger(output_dir):
 
 def construct_trace_func(generate_params, data, dim_u, dim_v=None):
 
-    jitted_generate_params = api.jit(api.partial(generate_params, data=data))
+    jitted_generate_params = jax.jit(partial(generate_params, data=data))
 
     if dim_v is None:
 
@@ -556,7 +557,7 @@ def run_experiment(
             neg_log_dens_hmc,
             grad_neg_log_dens_hmc,
         ) = mlift.construct_mici_system_neg_log_dens_functions(
-            api.partial(posterior_neg_log_dens, data=data)
+            partial(posterior_neg_log_dens, data=data)
         )
         euclidean_system_kwargs = {
             "neg_log_dens": neg_log_dens_hmc,
@@ -573,7 +574,7 @@ def run_experiment(
             neg_log_dens_chmc,
             grad_neg_log_dens_chmc,
         ) = mlift.construct_mici_system_neg_log_dens_functions(
-            api.partial(extended_prior_neg_log_dens, data=data)
+            partial(extended_prior_neg_log_dens, data=data)
         )
         constrained_system_kwargs["neg_log_dens"] = neg_log_dens_chmc
         constrained_system_kwargs["grad_neg_log_dens"] = grad_neg_log_dens_chmc

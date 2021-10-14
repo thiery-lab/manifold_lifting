@@ -2,10 +2,9 @@
 
 import os
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift import construct_state_space_model_generators
 from mlift.distributions import normal, half_normal, uniform
 from mlift.prior import PriorSpecification, set_up_prior
@@ -95,7 +94,7 @@ def constr_split(u, v, n, y, data):
 def jacob_constr_split_blocks(u, v, n, y, data):
     dim_u = compute_dim_u(data)
     dim_y = y.shape[0]
-    params, dparams_du = api.jvp(
+    params, dparams_du = jax.jvp(
         lambda u_: generate_params(u_, data), (u,), (np.ones(dim_u),)
     )
     exp_x = y - params["σ"] * n

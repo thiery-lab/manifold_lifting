@@ -11,11 +11,11 @@ References:
 """
 
 import os
+from functools import partial
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift.systems import HierarchicalLatentVariableModelSystem
 from mlift.distributions import normal, half_cauchy
 from mlift.prior import PriorSpecification, set_up_prior
@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     # Define variables to be traced
 
-    jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
+    jitted_generate_from_model = jax.jit(partial(generate_from_model, data=data))
 
     def trace_func(state):
         u, v = state.pos[:dim_u], state.pos[dim_u : dim_u + dim_y]

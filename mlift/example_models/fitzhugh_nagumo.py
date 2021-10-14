@@ -1,12 +1,11 @@
 """FitzHugh-Nagumo model of neuronal action potential generation."""
 
 import os
-from collections import namedtuple
+from functools import partial
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import log_normal, normal
 from mlift.ode import integrate_ode_rk4
@@ -95,7 +94,7 @@ def sample_initial_states(
         data["y_obs"], data["t_seq"], smoothing_window_width, peak_value_threshold
     )
     num_tries = 0
-    jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
+    jitted_generate_from_model = jax.jit(partial(generate_from_model, data=data))
     while len(init_states) < num_chain and num_tries < max_init_tries:
         u = sample_from_prior(rng, data)
         params, x = jitted_generate_from_model(u)
@@ -156,7 +155,7 @@ if __name__ == "__main__":
 
     # Define variables to be traced
 
-    jitted_generate_params = api.jit(api.partial(generate_params, data=data))
+    jitted_generate_params = jax.jit(partial(generate_params, data=data))
 
     def trace_func(state):
         u = state.pos[:dim_u]

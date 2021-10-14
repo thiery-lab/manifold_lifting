@@ -1,12 +1,9 @@
 """Gaussian process regression with Student's T observation noise (ν = 4)"""
 
-import os
-import pickle
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift.systems import GeneralGaussianProcessModelSystem
 from mlift.transforms import standard_normal_to_students_t
 from mlift.distributions import half_normal, inverse_gamma, students_t
@@ -35,7 +32,7 @@ def squared_exp_covar(x, params):
     def sq_exp(x1, x2):
         return np.exp(-(((x1 - x2) / params["λ"]) ** 2).sum() / 2)
 
-    return params["α"] * api.vmap(lambda x1: api.vmap(lambda x2: sq_exp(x1, x2))(x))(x)
+    return params["α"] * jax.vmap(lambda x1: jax.vmap(lambda x2: sq_exp(x1, x2))(x))(x)
 
 
 def covar_func(u, data):

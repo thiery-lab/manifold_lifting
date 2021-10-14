@@ -4,11 +4,11 @@ Source: https://github.com/stan-dev/example-models/
 """
 
 import os
+from functools import partial
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import truncated_normal, log_normal
 from mlift.ode import integrate_ode_rk4
@@ -101,7 +101,7 @@ def sample_initial_states(
     peak_times_obs_1 = utils.calculate_peak_times(
         x_obs[:, 1], data["t_seq"], smoothing_window_width, peak_value_threshold
     )
-    jitted_generate_from_model = api.jit(api.partial(generate_from_model, data=data))
+    jitted_generate_from_model = jax.jit(partial(generate_from_model, data=data))
     num_tries = 0
     while len(init_states) < num_chain and num_tries < max_init_tries:
         u = sample_from_prior(rng, data)

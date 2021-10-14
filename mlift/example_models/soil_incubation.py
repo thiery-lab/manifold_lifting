@@ -7,8 +7,6 @@ import os
 import numpy as onp
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import half_normal, half_cauchy, beta
 from mlift.ode import integrate_ode_rk4

@@ -1,7 +1,5 @@
-import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
-from jax.lax.linalg import triangular_solve, cholesky
+from jax import lax, numpy as np
+from jax.lax.linalg import triangular_solve
 from mlift.math import log_diff_exp
 
 

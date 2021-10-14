@@ -8,8 +8,6 @@ import pickle
 import numpy as onp
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 from mlift.systems import IndependentAdditiveNoiseModelSystem
 from mlift.distributions import log_normal
 from mlift.prior import PriorSpecification, set_up_prior

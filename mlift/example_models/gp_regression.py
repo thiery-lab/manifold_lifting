@@ -1,12 +1,9 @@
 """Gaussian process regression with Gaussian observation noise"""
 
-import os
-import pickle
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
-import jax.lax as lax
-import jax.api as api
 import jax.scipy.linalg as sla
 from mlift.systems import GaussianProcessModelSystem
 from mlift.distributions import half_normal, inverse_gamma
@@ -35,7 +32,7 @@ def squared_exp_covar(x, params):
     def sq_exp(x1, x2):
         return np.exp(-(((x1 - x2) / params["λ"]) ** 2).sum() / 2)
 
-    return params["α"] * api.vmap(lambda x1: api.vmap(lambda x2: sq_exp(x1, x2))(x))(x)
+    return params["α"] * jax.vmap(lambda x1: jax.vmap(lambda x2: sq_exp(x1, x2))(x))(x)
 
 
 def covar_func(u, data):
