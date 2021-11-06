@@ -99,13 +99,20 @@ def set_up_prior(prior_specs):
             nld += spec.distribution.neg_log_dens(u_slice)
         return nld
 
-    def sample_from_prior(rng, data):
+    def sample_from_prior(rng, data, num_sample=None):
         u_slices = []
         for _, spec in reparametrized_prior_specs(data):
             shape = get_shape(spec, data)
-            u_slices.append(
-                np.atleast_1d(spec.distribution.sample(rng, shape).flatten())
-            )
-        return np.concatenate(u_slices)
+            if num_sample is None:
+                u_slices.append(
+                    np.atleast_1d(spec.distribution.sample(rng, shape).flatten())
+                )
+            else:
+                shape = (num_sample,) + shape
+                u_slices.append(
+                    np.atleast_2d(spec.distribution.sample(rng, shape).reshape((num_sample, -1)))
+                )
+
+        return np.concatenate(u_slices, -1)
 
     return compute_dim_u, generate_params, prior_neg_log_dens, sample_from_prior
