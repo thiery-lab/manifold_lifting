@@ -513,6 +513,7 @@ class IndependentAdditiveNoiseModelSystem(_AbstractDifferentiableGenerativeModel
         neg_log_dens=standard_normal_neg_log_dens,
         grad_neg_log_dens=standard_normal_grad_neg_log_dens,
         force_full_gram_cholesky=False,
+        jacob_generate_y=None,
     ):
         """
         Args:
@@ -544,6 +545,17 @@ class IndependentAdditiveNoiseModelSystem(_AbstractDifferentiableGenerativeModel
                 matrix identity and matrix determinant lemma when `dim_u < dim_y`. If
                 `dim_u` is only slightly smaller than `dim_y` this may be more
                 efficient.
+            jacob_generate_y (callable): Optional. Function which takes three arguments
+                `(u, n, data)` with `u` a length `dim_u` 1D array of latent variables,
+                `n` a length `dim_y` 1D array of observation noise variables and `data`
+                a dictionary of any fixed values / data used in generation, and
+                outputs a nested tuple with structure `(dy_du, dy_dn), y` where `dy_du`
+                is a `(dim_y, dim_u)` shaped 2D array corresponding to the Jacobian
+                of `generate_y` with respect to the `u` argument, `dy_dn` a
+                `(dim_y, dim_n)` 2D array corresponding to the Jacobian of `generate_y`
+                with respect to the `n` argument and `y` is the corresponding `dim_y`
+                shaped 1D array output of `generate_y`. If not specified, the Jacobian
+                will be automatically constructed.
         """
 
         y_obs = data["y_obs"]
@@ -555,13 +567,16 @@ class IndependentAdditiveNoiseModelSystem(_AbstractDifferentiableGenerativeModel
 
         def jacob_constr_blocks(q):
             u, n = q[:dim_u], q[dim_u:]
-            if dim_u <= dim_y:
-                dy_du = jax.jacfwd(generate_y)(u, n, data)
+            if jacob_generate_y is None:
+                if dim_u <= dim_y:
+                    dy_du = jax.jacfwd(generate_y)(u, n, data)
+                else:
+                    dy_du = jax.jacrev(generate_y)(u, n, data)
+                y, dy_dn = jax.jvp(
+                    lambda n: generate_y(u, n, data), (n,), (np.ones(dim_y),)
+                )
             else:
-                dy_du = jax.jacrev(generate_y)(u, n, data)
-            y, dy_dn = jax.jvp(
-                lambda n: generate_y(u, n, data), (n,), (np.ones(dim_y),)
-            )
+                (dy_du, dy_dn), y = jacob_generate_y(u, n, data)
             return (dy_du, dy_dn), y - y_obs
 
         def lmult_by_jacob_constr(dy_du, dy_dn, vct):
