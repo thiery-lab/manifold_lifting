@@ -1,9 +1,16 @@
 # Ignore notebooks in root-directory
 /*.ipynb
 
+.vscode
+
 # Ignore experiment results
 
-/experiments/results
+results/
+experiments/results
+notebooks/results
+notebooks/plots
+notebooks/presentation-plots
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
