@@ -4,8 +4,8 @@ Sodium-channel based conductances.
 """
 
 import os
-import pickle
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
 from mlift.systems import IndependentAdditiveNoiseModelSystem
@@ -56,31 +56,41 @@ def beta_h(v, params):
     return 1 / (np.exp((v + params["k_beta_h_1"]) / params["k_beta_h_2"]) + 1)
 
 
-def solve_for_sodium_conductances(t_seq, v, params):
+def solve_for_sodium_conductance(t, v, params):
     m_0 = alpha_m(0, params) / (alpha_m(0, params) + beta_m(0, params))
     h_0 = alpha_h(0, params) / (alpha_h(0, params) + beta_h(0, params))
     a_m, b_m = alpha_m(v, params), beta_m(v, params)
     m_infty, tau_m = a_m / (a_m + b_m), 1 / (a_m + b_m)
-    m_seq = m_0 - (m_0 - m_infty) * (1 - np.exp(-t_seq / tau_m))
+    m = m_0 - (m_0 - m_infty) * (1 - np.exp(-t / tau_m))
     a_h, b_h = alpha_h(v, params), beta_h(v, params)
     h_infty, tau_h = a_h / (a_h + b_h), 1 / (a_h + b_h)
-    h_seq = h_0 - (h_0 - h_infty) * (1 - np.exp(-t_seq / tau_h))
-    return params["g_bar_Na"] * m_seq ** 3 * h_seq
+    h = h_0 - (h_0 - h_infty) * (1 - np.exp(-t / tau_h))
+    return params["g_bar_Na"] * m ** 3 * h
 
 
 def generate_from_model(u, data):
     params = generate_params(u, data)
-    conductances = [
-        solve_for_sodium_conductances(t_seq, -v, params)
-        for t_seq, v in zip(data["obs_times_g_Na"], data["depolarizations"])
-    ]
-    x = np.concatenate(conductances)
+    x = jax.vmap(solve_for_sodium_conductance, (0, 0, None))(
+        data["times"], -data["depolarizations"], params
+    )
     return params, x
 
 
 def generate_y(u, n, data):
     params, x = generate_from_model(u, data)
     return x + params["σ"] * n
+
+
+def jacob_generate_y(u, n, data):
+
+    def g_y(u, n, t, v):
+        params = generate_params(u, data)
+        return solve_for_sodium_conductance(t, v, params) + params["σ"] * n
+
+    y, (dy_du, dy_dn) = jax.vmap(jax.value_and_grad(g_y, (0, 1)), (None, 0, 0, 0))(
+        u, n, data["times"], -data["depolarizations"]
+    )
+    return (dy_du, dy_dn), y
 
 
 def extended_prior_neg_log_dens(q, data):
@@ -119,14 +129,17 @@ if __name__ == "__main__":
     parser = utils.set_up_argparser_with_standard_arguments(
         "Run Hodgkin-Huxley model voltage-clamp data experiment"
     )
+    parser.add_argument(
+        "--use-manual-jacobian",
+        action="store_true",
+        help="Use manually constructed generator function Jacobian",
+    )
     args = parser.parse_args()
 
     # Load data
 
-    with open(os.path.join(args.data_dir, "hodgkin-huxley-data.pkl"), "r+b") as f:
-        data = pickle.load(f)
-
-    data["y_obs"] = np.concatenate(data["obs_vals_g_Na"])
+    data = dict(onp.load(os.path.join(args.data_dir, "hodgkin-huxley-sodium-data.npz")))
+    data["y_obs"] = data["conductances"]
     dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
@@ -153,6 +166,7 @@ if __name__ == "__main__":
             "generate_y": generate_y,
             "data": data,
             "dim_u": dim_u,
+            "jacob_generate_y": jacob_generate_y, # if args.use_manual_jacobian else None,
         },
         sample_initial_states=sample_initial_states,
     )

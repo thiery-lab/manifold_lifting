@@ -4,8 +4,8 @@ Potassium-channel based conductances.
 """
 
 import os
-import pickle
 import numpy as onp
+import jax
 import jax.config
 import jax.numpy as np
 from mlift.systems import IndependentAdditiveNoiseModelSystem
@@ -44,27 +44,37 @@ def beta_n(v, params):
     return params["k_beta_n_1"] * np.exp(v / params["k_beta_n_2"])
 
 
-def solve_for_potassium_conductances(t_seq, v, params):
+def solve_for_potassium_conductance(t, v, params):
     n_0 = alpha_n(0, params) / (alpha_n(0, params) + beta_n(0, params))
     a_n, b_n = alpha_n(v, params), beta_n(v, params)
     n_infty, tau_n = a_n / (a_n + b_n), 1 / (a_n + b_n)
-    n_seq = n_0 - (n_0 - n_infty) * (1 - np.exp(-t_seq / tau_n))
-    return params["g_bar_K"] * n_seq ** 4
+    n = n_0 - (n_0 - n_infty) * (1 - np.exp(-t / tau_n))
+    return params["g_bar_K"] * n ** 4
 
 
 def generate_from_model(u, data):
     params = generate_params(u, data)
-    conductances = [
-        solve_for_potassium_conductances(t_seq, -v, params)
-        for t_seq, v in zip(data["obs_times_g_K"], data["depolarizations"])
-    ]
-    x = np.concatenate(conductances)
+    x = jax.vmap(solve_for_potassium_conductance, (0, 0, None))(
+        data["times"], -data["depolarizations"], params
+    )
     return params, x
 
 
 def generate_y(u, n, data):
     params, x = generate_from_model(u, data)
     return x + params["σ"] * n
+
+
+def jacob_generate_y(u, n, data):
+
+    def g_y(u, n, t, v):
+        params = generate_params(u, data)
+        return solve_for_potassium_conductance(t, v, params) + params["σ"] * n
+
+    y, (dy_du, dy_dn) = jax.vmap(jax.value_and_grad(g_y, (0, 1)), (None, 0, 0, 0))(
+        u, n, data["times"], -data["depolarizations"]
+    )
+    return (dy_du, dy_dn), y
 
 
 def extended_prior_neg_log_dens(q, data):
@@ -103,14 +113,19 @@ if __name__ == "__main__":
     parser = utils.set_up_argparser_with_standard_arguments(
         "Run Hodgkin-Huxley model voltage-clamp data experiment (potassium data)"
     )
+    parser.add_argument(
+        "--use-manual-jacobian",
+        action="store_true",
+        help="Use manually constructed generator function Jacobian",
+    )
     args = parser.parse_args()
 
     # Load data
 
-    with open(os.path.join(args.data_dir, "hodgkin-huxley-data.pkl"), "r+b") as f:
-        data = pickle.load(f)
-
-    data["y_obs"] = np.concatenate(data["obs_vals_g_K"])
+    data = dict(
+        onp.load(os.path.join(args.data_dir, "hodgkin-huxley-potassium-data.npz"))
+    )
+    data["y_obs"] = data["conductances"]
     dim_u = compute_dim_u(data)
 
     # Set up seeded random number generator
@@ -137,6 +152,7 @@ if __name__ == "__main__":
             "generate_y": generate_y,
             "data": data,
             "dim_u": dim_u,
+            "jacob_generate_y": jacob_generate_y if args.use_manual_jacobian else None,
         },
         sample_initial_states=sample_initial_states,
     )
