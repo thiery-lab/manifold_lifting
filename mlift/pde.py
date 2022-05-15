@@ -1,11 +1,16 @@
 import numpy as np
-import fenics
-import ufl
 from scipy.special import gamma
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import LinearOperator, aslinearoperator
-from sksparse.cholmod import cholesky as sparse_cholesky
-import mici
+
+try:
+    import fenics
+    import ufl
+    from sksparse.cholmod import cholesky as sparse_cholesky
+except ImportError as e:
+    raise ImportError(
+        "To use this module FEniCS and scikit-sparse must be installed"
+    ) from e
 
 
 def apply_boundary_conditions(obj, boundary_conditions):
@@ -80,6 +85,7 @@ def cholmod_factor_to_sqrt_inv_linear_operator(cholmod_factor, shape):
     return LinearOperator(
         shape=shape, matvec=lmult_by_sqrt_inv, rmatvec=rmult_by_sqrt_inv
     )
+
 
 def construct_mesh_and_observation_coordinates(
     mesh_type, mesh_resolution, obs_resolution

@@ -4,8 +4,11 @@ import os
 import warnings
 import logging
 import numpy as np
-import fenics
-import ufl
+try:
+    import fenics
+    import ufl
+except ImportError as e:
+    raise  ImportError("To use this module FEniCS must be installed") from e
 import mlift.pde as pde
 import mlift.example_models.utils as utils
 import mici
@@ -129,7 +132,7 @@ if __name__ == "__main__":
 
     # Disable runtime warnings to prevent interference with progress meter display
 
-    warnings.filterwarnings("ignore", category=RuntimeWarning) 
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
 
     # Run experiment
 
