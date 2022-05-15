@@ -1,5 +1,7 @@
 # Manifold lifting: scaling Markov chain Monte Carlo to the vanishing noise regime
 
+[![DOI](https://zenodo.org/badge/246543695.svg)](https://zenodo.org/badge/latestdoi/246543695)
+
 Code accompanying the paper [*Manifold lifting: scaling Markov chain Monte Carlo to the vanishing noise regime*](https://arxiv.org/abs/2003.03950).
 
 **Abstract**: Standard Markov chain Monte Carlo methods struggle to explore distributions that concentrate in the neighbourhood of low-dimensional submanifolds. This pathology naturally occurs in Bayesian inference settings when there is a high signal-to-noise ratio in the observational data but the model is inherently over-parametrised or non-identifiable. In this paper, we propose a strategy that transforms the original sampling problem into the task of exploring a distribution supported on a manifold embedded in a higher-dimensional space; in contrast to the original posterior this lifted distribution remains diffuse in the limit of vanishing observation noise. We employ a constrained Hamiltonian Monte Carlo method, which exploits the geometry of this lifted distribution, to perform efficient approximate inference. We demonstrate in numerical experiments that, contrarily to competing approaches, the sampling efficiency of our proposed methodology does not degenerate as the target distribution to be explored concentrates near low-dimensional submanifolds.
