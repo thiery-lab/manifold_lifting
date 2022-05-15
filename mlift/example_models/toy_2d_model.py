@@ -20,9 +20,11 @@ import warnings
 from functools import partial
 import arviz
 import numpy as np
+import sympy
 import mici
 import symnum.numpy as snp
 from symnum import (
+    named_array,
     numpify,
     jacobian,
     grad,
@@ -64,6 +66,7 @@ def metric(theta, sigma):
 
 
 vjp_metric = vector_jacobian_product(metric, return_aux=True)
+jacob_metric = jacobian(metric, return_aux=True)
 
 
 @numpify(dim_theta + dim_y)
@@ -92,6 +95,66 @@ def neg_log_lifted_posterior_dens(theta, eta, sigma, y):
         + eta ** 2 / 2
         + snp.log(jac @ jac.T + sigma ** 2)[0, 0] / 2
     )
+
+
+def split_into_integer_parts(n, m):
+    return [round(n / m)] * (m - 1) + [n - round(n / m) * (m - 1)]
+
+
+def grid_on_interval(interval, n_points, cosine_spacing=False):
+    if cosine_spacing:
+        # Use non-linear spacing with higher density near endpoints
+        ts = (1 + np.cos(np.linspace(0, 1, n_points) * np.pi)) / 2
+    else:
+        ts = np.linspace(0, 1, n_points)
+    # If open interval space over range [left + eps, right - eps]
+    eps = 10 * np.finfo(np.float64).eps
+    left = float(interval.left) + eps if interval.left_open else float(interval.left)
+    right = (
+        float(interval.right) - eps if interval.right_open else float(interval.right)
+    )
+    return left + ts * (right - left)
+
+
+def solve_for_limiting_manifold(y, n_points=200, cosine_spacing=False):
+    assert n_points % 2 == 0, "n_points must be even"
+    theta = named_array("θ", 2)
+    # solve F(theta) = y for theta[1] in terms of theta[0]
+    theta_1_gvn_theta_0 = sympy.solve(forward_func(theta)[0] - y, theta[1])
+    # find interval(s) over which theta[0] gives real theta[1] solutions
+    theta_0_range = sympy.solveset(
+        theta_1_gvn_theta_0[0] ** 2 > 0, theta[0], domain=sympy.Reals
+    )
+    theta_0_intervals = (
+        theta_0_range.args
+        if isinstance(theta_0_range, sympy.Union)
+        else [theta_0_range]
+    )
+    # create  grid of values over valid theta[0] interval(s)
+    n_intervals = len(theta_0_intervals)
+    theta_0_grids = [
+        grid_on_interval(intvl, n_pt + 1, cosine_spacing)
+        for intvl, n_pt in zip(
+            theta_0_intervals, split_into_integer_parts(n_points // 2, n_intervals)
+        )
+    ]
+    # generate NumPy function to calculate theta[1] in terms of theta[0]
+    solve_func = sympy.lambdify(theta[0], theta_1_gvn_theta_0)
+    manifold_points = []
+    for theta_0_grid in theta_0_grids:
+        # numerically calculate +/- theta[1] solutions over theta[0] grid
+        theta_1_grid_neg, theta_1_grid_pos = solve_func(theta_0_grid)
+        # stack theta[0] and theta[1] values in to 2D array in anticlockwise order
+        manifold_points.append(
+            np.stack(
+                [
+                    np.concatenate([theta_0_grid, theta_0_grid[-2:0:-1]]),
+                    np.concatenate([theta_1_grid_neg, theta_1_grid_pos[-2:0:-1]]),
+                ],
+                -1,
+            )
+        )
+    return manifold_points
 
 
 def get_constrained_hmc_mici_objects(args, theta_inits, sigma):
@@ -360,12 +423,9 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore", category=RuntimeWarning)
     if args.run_chmc_to_initialise:
         print("Running short CHMC chains to get initial states")
-        (
-            init_states,
-            system,
-            integrator,
-            adapters,
-        ) = get_constrained_hmc_mici_objects(args, theta_inits, args.obs_noise_std)
+        (init_states, system, integrator, adapters,) = get_constrained_hmc_mici_objects(
+            args, theta_inits, args.obs_noise_std
+        )
         sampler = mici.samplers.DynamicMultinomialHMC(system, integrator, rng)
         final_states, _, _ = sampler.sample_chains_with_adaptive_warm_up(
             50, 100, init_states, adapters=adapters, n_process=args.num_chain,
@@ -394,9 +454,7 @@ if __name__ == "__main__":
     sampling_time = time.time() - start_time
     print(f"Integrator step size: {integrator.step_size:.2g}")
     print(f"Total sampling time: {sampling_time:.0f} seconds")
-    summary = arviz.summary(
-        traces, var_names=["theta", "hamiltonian", "neg_log_dens"]
-    )
+    summary = arviz.summary(traces, var_names=["theta", "hamiltonian", "neg_log_dens"])
     print(summary)
     summary_dict = summary.to_dict()
     summary_dict["total_sampling_time"] = sampling_time
@@ -404,5 +462,5 @@ if __name__ == "__main__":
     for key, value in traces.items():
         if key[-6:] == "_calls":
             summary_dict["per_chain_" + key] = [int(v[-1]) for v in value]
-    with open(os.path.join(output_dir,  f"summary.json"), "w") as f:
+    with open(os.path.join(output_dir, f"summary.json"), "w") as f:
         json.dump(summary_dict, f, ensure_ascii=False, indent=2)
