@@ -16,16 +16,10 @@ pip install git+https://github.com/thiery-lab/manifold_lifting.git
 
 The `mlift.pde` module and associated example model in `mlift.example_models.poisson` additionally require [FEniCS (v2019.10)](https://fenicsproject.org/download/archive/) and [`scikit-sparse`](https://scikit-sparse.readthedocs.io/en/latest/overview.html#installation) to be installed. Note that the [`fenics` metapackage on PyPI](https://pypi.org/project/fenics/) does not install the required binary dependencies and so FEniCS should instead be separately installed by [following one of the methods listed in the project's installation instructions](https://fenicsproject.org/download/archive/).
 
-Alternatively a `conda` environment `man-lift` containing all the required dependencies to run all of the experiments can be created from the provided [`environment.yml`](environment.yml) file by running
+Alternatively a `conda` environment `man-lift` containing the required dependencies to run all of the experiments (including the `mlift` package) can be created from the provided [`environment.yml`](environment.yml) file by running
 
 ```bash
 conda env create -f environment.yml
-```
-
-The `mlift` package should then be installed into the `man-lift` environment using `pip`, either using a Git URL as above or installing from a local clone using
-
-```bash
-pip install .
 ```
 
 ## Experiment scripts
