@@ -438,13 +438,14 @@ def sample_chains(
     args, sampler, init_states, trace_funcs, adapters, output_dir, monitor_stats
 ):
     start_time = time.time()
-    final_states, traces, stats = sampler.sample_chains_with_adaptive_warm_up(
+    final_states, traces, stats = sampler.sample_chains(
         args.num_warm_up_iter,
         args.num_main_iter,
         init_states,
+        trace_warm_up=True,
         trace_funcs=trace_funcs,
         adapters=adapters,
-        memmap_enabled=True,
+        force_memmap=True,
         memmap_path=output_dir,
         monitor_stats=monitor_stats,
         max_threads_per_process=1,
