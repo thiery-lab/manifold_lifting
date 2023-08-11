@@ -35,7 +35,7 @@ def standard_normal_grad_neg_log_dens(q):
 
 def convert_to_numpy_pytree(jax_pytree):
     """Recursively convert 'pytree' of JAX arrays to NumPy arrays."""
-    if isinstance(jax_pytree, np.DeviceArray):
+    if isinstance(jax_pytree, jax.Array):
         return onp.asarray(jax_pytree)
     elif isinstance(jax_pytree, (float, int, complex, bool, type(None))):
         return jax_pytree
@@ -56,7 +56,7 @@ def construct_mici_system_neg_log_dens_functions(jax_neg_log_dens):
     transformed versions of the function and its gradient and then wraps these into
     functions with the required interface for passing to the initialiser of a Mici
     system class, specifically ensuring the values outputted by the functions are NumPy
-    `ndarray` objects rather than JAX `DeviceArray` or `Buffer` instances and returning
+    `ndarray` objects rather than JAX `Array` or `Buffer` instances and returning
     both the gradient and value from the gradient function (in that order).
 
     Args:
