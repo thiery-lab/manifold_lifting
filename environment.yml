@@ -3,18 +3,18 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - matplotlib=3.5.2
-  - numpy=1.23.1
+  - matplotlib=3.7.2
+  - numpy=1.25.2
   - fenics-dolfin=2019.1.0
-  - python=3.9
-  - multiprocess=0.70.13
-  - scipy=1.8.1
-  - arviz=0.12.1
-  - jax=0.3.15
-  - scikit-sparse=0.4.6
-  - sympy=1.10.1
-  - pip=22.2
+  - python=3.11
+  - multiprocess=0.70.15
+  - scipy=1.11.1
+  - arviz=0.16.1
+  - jax=0.4.14
+  - scikit-sparse=0.4.12
+  - sympy=1.12
+  - pip=23.2.1
   - pip:
-    - mici>=0.2
-    - symnum>=0.1.2
+    - mici==0.2.1
+    - symnum==0.2.0
     - git+https://github.com/thiery-lab/manifold_lifting@v0.1.0#egg=mlift
