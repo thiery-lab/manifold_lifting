@@ -10,7 +10,7 @@ Code accompanying the paper *Manifold lifting: scaling Markov chain Monte Carlo 
 
 ## Installation
 
-The `mlift` package requires Python 3.8 or above. To install the `mlift` package and its dependencies into an existing Python environment run
+The `mlift` package requires Python 3.9 or above. To install the `mlift` package and its dependencies into an existing Python environment run
 
 ```bash
 pip install git+https://github.com/thiery-lab/manifold_lifting.git
