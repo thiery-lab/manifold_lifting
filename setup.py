@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="mlift",
-    version="0.1.0",
+    version="0.1.1",
     description="Utilities for inference in generative models using Mici",
     author="Matt Graham",
     url="https://github.com/thiery-lab/manifold_lifting.git",
