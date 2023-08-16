@@ -26,7 +26,7 @@ conda env create -f environment.yml
 
 ## Experiment scripts
 
-A number of scripts for reproducing the numerical experiments used to produce the figures in the paper are provided in the `scripts` directory. To run these scripts the `mlift` package and its dependencies need to be installed in a local Python 3.8+ environment [as described above](#installation). The default settings of the scripts assume they are run from the _top-level_ directory of a clone of the repository. Pass a `--help` argument to any of the scripts to see a description of what the script does and the available environment variables for configuring the behaviour of the script.
+A number of scripts for reproducing the numerical experiments used to produce the figures in the paper are provided in the `scripts` directory. To run these scripts the `mlift` package and its dependencies need to be installed in a local Python 3.9+ environment [as described above](#installation). The default settings of the scripts assume they are run from the _top-level_ directory of a clone of the repository. Pass a `--help` argument to any of the scripts to see a description of what the script does and the available environment variables for configuring the behaviour of the script.
 
 ## Example notebook
 
