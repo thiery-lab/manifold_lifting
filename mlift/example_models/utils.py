@@ -442,7 +442,7 @@ def sample_chains(
         args.num_warm_up_iter,
         args.num_main_iter,
         init_states,
-        trace_warm_up=True,
+        trace_warm_up=False,
         trace_funcs=trace_funcs,
         adapters=adapters,
         force_memmap=True,
@@ -587,9 +587,24 @@ def run_experiment(
         euclidean_system_class,
         euclidean_system_kwargs,
     )
+    
+    system_methods = ("neg_log_dens", "grad_neg_log_dens", "h2", "dh2_dmom")
+    if args.algorithm == "chmc":
+        system_methods = (
+            *system_methods,
+            "constr",
+            "jacob_constr_blocks",
+            "gram_components",
+            "log_det_sqrt_gram",
+            "grad_log_det_sqrt_gram",
+            "rmult_by_jacob_constr",
+            "lmult_by_pinv_jacob_constr",
+            "lmult_by_inv_jacob_product",
+        )
+    call_counts_init = {f"{method}_calls": 0 for method in system_methods}
 
     def hamiltonian_and_call_count_trace_func(state):
-        call_counts = {
+        call_counts = call_counts_init | {
             name.split(".")[-1] + "_calls": val
             for (name, _), val in state._call_counts.items()
         }
