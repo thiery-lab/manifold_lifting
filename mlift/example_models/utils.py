@@ -24,7 +24,9 @@ def set_up_argparser_with_standard_arguments(description):
         help="Root directory to make experiment output subdirectory in",
     )
     parser.add_argument(
-        "--data-dir", default="data", help="Directory containing dataset files",
+        "--data-dir",
+        default="data",
+        help="Directory containing dataset files",
     )
     parser.add_argument(
         "--algorithm",
@@ -241,7 +243,6 @@ def set_up_logger(output_dir):
 
 
 def construct_trace_func(generate_params, data, dim_u, dim_v=None):
-
     jitted_generate_params = jax.jit(partial(generate_params, data=data))
 
     if dim_v is None:
@@ -534,7 +535,6 @@ def run_experiment(
     dir_prefix=None,
     precompile_jax_functions=True,
 ):
-
     print(
         f"Running experiment with {experiment_name} model using "
         f"{args.algorithm.upper()} algorithm for inference"
@@ -587,20 +587,41 @@ def run_experiment(
         euclidean_system_class,
         euclidean_system_kwargs,
     )
-    
+
+    # The traces dictionary is initialised at the beginning of sampling by calling
+    # the trace function(s) on the initial state. As we trace the call counts of various
+    # system methods to allow estimating total operation time, we need to explicitly
+    # initialise the call counts traces to zero for all methods when the trace functions
+    # are called on the initial state to ensure that keys (and arrays) exist in the
+    # traces dictionary for all methods that may be called, *even* if they have not been
+    # called by the point the trace functions are evaluated on the initial state, as
+    # otherwise we will encounter key errors when trying to trace a call count
+    # subsequently after the method has first been called.
     system_methods = ("neg_log_dens", "grad_neg_log_dens", "h2", "dh2_dmom")
     if args.algorithm == "chmc":
-        system_methods = (
-            *system_methods,
-            "constr",
-            "jacob_constr_blocks",
-            "gram_components",
-            "log_det_sqrt_gram",
-            "grad_log_det_sqrt_gram",
-            "rmult_by_jacob_constr",
-            "lmult_by_pinv_jacob_constr",
-            "lmult_by_inv_jacob_product",
-        )
+        if issubclass(
+            constrained_system_class, mici.systems.ConstrainedEuclideanMetricSystem
+        ):
+            system_methods = (
+                *system_methods,
+                "constr",
+                "jacob_constr",
+                "mhp_constr",
+                "gram",
+                "grad_log_det_sqrt_gram",
+            )
+        else:
+            system_methods = (
+                *system_methods,
+                "constr",
+                "jacob_constr_blocks",
+                "gram_components",
+                "log_det_sqrt_gram",
+                "grad_log_det_sqrt_gram",
+                "rmult_by_jacob_constr",
+                "lmult_by_pinv_jacob_constr",
+                "lmult_by_inv_jacob_product",
+            )
     call_counts_init = {f"{method}_calls": 0 for method in system_methods}
 
     def hamiltonian_and_call_count_trace_func(state):
